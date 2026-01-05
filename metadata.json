@@ -1,0 +1,7 @@
+{
+  "name": "Hand Harmony AR",
+  "description": "An interactive AR experience where magical birds visit your hand when you stay still, and fly away when you move.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
