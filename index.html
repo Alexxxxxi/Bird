@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -5,31 +6,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Hand Harmony AR</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- MediaPipe Dependencies -->
+    <!-- Use standard scripts for MediaPipe to ensure window.Holistic is populated -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
     <style>
       body { margin: 0; padding: 0; overflow: hidden; background: #000; }
-      canvas { display: block; }
+      canvas { display: block; position: absolute; inset: 0; width: 100vw; height: 100vh; }
+      #root { width: 100vw; height: 100vh; }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
-    "@mediapipe/camera_utils": "https://aistudiocdn.com/@mediapipe/camera_utils@^0.3.1675466862",
-    "@mediapipe/holistic": "https://aistudiocdn.com/@mediapipe/holistic@^0.5.1675471629",
-    "@mediapipe/drawing_utils": "https://aistudiocdn.com/@mediapipe/drawing_utils@^0.3.1675466124"
-  }
-}
-</script>
-</head>
+    <script type="importmap">
+    {
+      "imports": {
+        "react/": "https://aistudiocdn.com/react@^19.2.0/",
+        "react": "https://aistudiocdn.com/react@^19.2.0",
+        "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+        "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0"
+      }
+    }
+    </script>
+  </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
   </body>
 </html>
