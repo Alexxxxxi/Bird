@@ -4,7 +4,8 @@ import { Bird } from './Bird';
 import { CreatureState, PoopEntity, CustomBirdConfig, CustomBirdAssets, CustomBirdTransforms, PartTransform } from '../types';
 import { isFist, getDistance, getUpperHandHull, getPointOnPolyline } from '../utils/geometry';
 import { SHAKE_THRESHOLD, CLEAN_THRESHOLD, SPECIES_CONFIG } from '../constants';
-import { Loader2, Camera, FlipHorizontal, Upload, X, Bird as BirdIcon, Settings2, Info, Sparkles, Ruler, Maximize, Smile, BookOpen, Layers, Move, RotateCcw, BoxSelect, Trash2, Edit2, Zap } from 'lucide-react';
+import { saveBirdToDB, getAllBirdsFromDB, deleteBirdFromDB } from '../utils/db';
+import { Loader2, Camera, FlipHorizontal, Upload, X, Bird as BirdIcon, Settings2, Info, Sparkles, Ruler, Maximize, Smile, BookOpen, Layers, Move, RotateCcw, BoxSelect, Trash2, Edit2, Zap, Share2, Download } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -91,6 +92,17 @@ const HandAR: React.FC = () => {
   const holisticRef = useRef<any>(null);
   const detectionActiveRef = useRef<boolean>(false);
 
+  // Persistence: Load on mount
+  useEffect(() => {
+    const loadSaved = async () => {
+      try {
+        const saved = await getAllBirdsFromDB();
+        if (saved) setCustomBirds(saved);
+      } catch (e) { console.error("Database loading failed:", e); }
+    };
+    loadSaved();
+  }, []);
+
   useEffect(() => {
     let frameId: number; let phase = 0;
     const loop = () => {
@@ -170,23 +182,20 @@ const HandAR: React.FC = () => {
         if (label === 'Left' || label === 'Right') {
             hull = getUpperHandHull(px);
         } else if (label === 'Head') {
-            // Crown detection refined: landing ON TOP of hair/head
             const faceScale = getDistance(toPx(lm[10]), toPx(lm[152]));
             const topPoint = toPx(lm[10]);
-            // Lift the perch points significantly above the highest facial landmark
-            const crownOffset = faceScale * 0.25; 
+            const crownOffset = faceScale * 0.28; 
             hull = [
-                {x: topPoint.x - crownOffset * 0.8, y: topPoint.y - crownOffset * 0.8},
+                {x: topPoint.x - crownOffset * 0.7, y: topPoint.y - crownOffset * 0.9},
                 {x: topPoint.x, y: topPoint.y - crownOffset},
-                {x: topPoint.x + crownOffset * 0.8, y: topPoint.y - crownOffset * 0.8}
+                {x: topPoint.x + crownOffset * 0.7, y: topPoint.y - crownOffset * 0.9}
             ];
         } else if (label.includes('Shoulder')) {
             const self = px[0];
             const width = state.width || 100;
-            // Shift shoulder perch further UP (30px instead of 15px) to be above the mass of the arm/shoulder
             hull = [
-                { x: self.x - width * 0.4, y: self.y - 35 },
-                { x: self.x + width * 0.4, y: self.y - 35 }
+                { x: self.x - width * 0.45, y: self.y - 45 },
+                { x: self.x + width * 0.45, y: self.y - 45 }
             ];
         }
         state.prevContour = hull;
@@ -250,15 +259,27 @@ const HandAR: React.FC = () => {
       setNewBirdTransforms(prev => ({ ...prev, [part]: { ...prev[part], [field]: isNaN(val) ? 0 : val } }));
   };
 
-  const addOrUpdateBird = () => {
+  const addOrUpdateBird = async () => {
     if (!newBirdName) return;
     const nb: CustomBirdConfig = { 
       id: editingId || Math.random().toString(36).substr(2,9), 
       name: newBirdName, assets: {...newBirdAssets}, transforms: {...newBirdTransforms}, globalScale: newBirdGlobalScale, globalRotation: newBirdGlobalRotation, flapAmplitude: newBirdFlapAmplitude, baseSize: newBirdBaseSize, sizeRange: newBirdSizeRange
     };
-    if (editingId) setCustomBirds(prev => prev.map(b => b.id === editingId ? nb : b));
-    else setCustomBirds(prev => [...prev, nb]);
-    resetLab();
+    
+    // Persist to DB
+    try {
+      await saveBirdToDB(nb);
+      if (editingId) setCustomBirds(prev => prev.map(b => b.id === editingId ? nb : b));
+      else setCustomBirds(prev => [...prev, nb]);
+      resetLab();
+    } catch (e) { console.error("Failed to save DNA:", e); alert("Save failed. Disk full?"); }
+  };
+
+  const deleteBird = async (id: string) => {
+    try {
+      await deleteBirdFromDB(id);
+      setCustomBirds(prev => prev.filter(b => b.id !== id));
+    } catch (e) { console.error("Deletion failed:", e); }
   };
 
   const resetLab = () => {
@@ -274,6 +295,22 @@ const HandAR: React.FC = () => {
     setNewBirdGlobalRotation(bird.globalRotation || 0);
     setNewBirdFlapAmplitude(bird.flapAmplitude || 1.0);
     setLabTab('synthesize');
+  };
+
+  const exportDNA = (bird: CustomBirdConfig) => {
+    const dnaCode = btoa(JSON.stringify(bird));
+    navigator.clipboard.writeText(dnaCode).then(() => alert("DNA Code copied! Paste this on another device to clone this bird."));
+  };
+
+  const importDNA = () => {
+    const code = prompt("Paste DNA Code here:");
+    if (code) {
+      try {
+        const bird = JSON.parse(atob(code));
+        bird.id = Math.random().toString(36).substr(2,9); // New ID for local
+        saveBirdToDB(bird).then(() => setCustomBirds(prev => [...prev, bird]));
+      } catch (e) { alert("Invalid DNA Code."); }
+    }
   };
 
   const checkWipeInteraction = (contours: any) => {
@@ -386,7 +423,7 @@ const HandAR: React.FC = () => {
       )}
 
       {showAssetPanel && (
-         <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-3xl flex items-center justify-center p-4">
+         <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-3xl flex items-center justify-center p-4 pointer-events-auto">
           <div className="bg-zinc-900 border border-white/10 w-full max-w-[95vw] rounded-[3.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[96vh] animate-in zoom-in-95 duration-300 pointer-events-auto">
             <div className="p-8 border-b border-white/5 flex justify-between items-center bg-zinc-800/30">
               <div className="flex items-center gap-8">
@@ -396,7 +433,10 @@ const HandAR: React.FC = () => {
                     <button onClick={() => setLabTab('blueprints')} className={`px-6 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${labTab === 'blueprints' ? 'bg-zinc-800 text-teal-400 shadow-xl' : 'text-zinc-500'}`}>Blueprints</button>
                 </div>
               </div>
-              <button onClick={() => setShowAssetPanel(false)} className="bg-zinc-800 p-3 rounded-full text-zinc-400 hover:text-white transition-all hover:rotate-90"><X className="w-6 h-6" /></button>
+              <div className="flex items-center gap-3">
+                <button onClick={importDNA} className="bg-zinc-800 p-3 rounded-full text-teal-400 hover:bg-zinc-700 transition-all flex items-center gap-2 px-6"><Download className="w-5 h-5" /><span className="text-[10px] font-black uppercase tracking-widest">Import DNA</span></button>
+                <button onClick={() => setShowAssetPanel(false)} className="bg-zinc-800 p-3 rounded-full text-zinc-400 hover:text-white transition-all hover:rotate-90"><X className="w-6 h-6" /></button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-10">
@@ -460,7 +500,8 @@ const HandAR: React.FC = () => {
                                             <div className="flex items-center gap-4"><div className="w-12 h-12 bg-zinc-950 rounded-xl overflow-hidden p-1 border border-white/5">{bird.assets.body && <img src={bird.assets.body} className="w-full h-full object-contain" />}</div><div><div className="text-white text-xs font-black tracking-tight">{bird.name}</div><div className="text-zinc-500 text-[9px] font-bold">DNA Scale: {bird.globalScale.toFixed(1)}x</div></div></div>
                                             <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
                                                 <button onClick={() => loadForEdit(bird)} className="text-zinc-700 hover:text-teal-400 transition-colors p-2"><Edit2 className="w-4 h-4" /></button>
-                                                <button onClick={() => setCustomBirds(prev => prev.filter(b => b.id !== bird.id))} className="text-zinc-700 hover:text-rose-400 transition-colors p-2"><Trash2 className="w-4 h-4" /></button>
+                                                <button onClick={() => exportDNA(bird)} className="text-zinc-700 hover:text-blue-400 transition-colors p-2"><Share2 className="w-4 h-4" /></button>
+                                                <button onClick={() => deleteBird(bird.id)} className="text-zinc-700 hover:text-rose-400 transition-colors p-2"><Trash2 className="w-4 h-4" /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -480,7 +521,7 @@ const HandAR: React.FC = () => {
         @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } } 
         input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; } 
         input[type=range] { -webkit-appearance: none; cursor: pointer; background: transparent; width: 100%; display: block; position: relative; z-index: 60; }
-        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 28px; width: 28px; border-radius: 50%; background: #2dd4bf; cursor: grab; margin-top: -11px; border: 4px solid #18181b; box-shadow: 0 6px 15px rgba(0,0,0,0.6); position: relative; pointer-events: auto; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 32px; width: 32px; border-radius: 50%; background: #2dd4bf; cursor: grab; margin-top: -12px; border: 4px solid #18181b; box-shadow: 0 6px 15px rgba(0,0,0,0.6); position: relative; pointer-events: auto; }
         input[type=range]::-webkit-slider-thumb:active { cursor: grabbing; transform: scale(1.15); background: #5eead4; }
         input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 8px; cursor: pointer; background: #3f3f46; border-radius: 6px; }
       `}</style>
