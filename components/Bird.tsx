@@ -1,8 +1,8 @@
 
-import { BirdEntity, BirdState, Species, IdleAction, CustomBirdConfig } from '../types';
+import { CreatureEntity, CreatureState, Species, IdleAction, CustomBirdConfig, CustomBirdTransforms } from '../types';
 import { SPECIES_CONFIG } from '../constants';
 
-export class Bird implements BirdEntity {
+export class Bird implements CreatureEntity {
   id: string;
   targetId: string;
   x: number;
@@ -18,7 +18,7 @@ export class Bird implements BirdEntity {
   wingSpan: number;
   flapSpeed: number;
   flapPhase: number;
-  state: BirdState;
+  state: CreatureState;
   perchOffset: number;
   species: Species;
   customConfig?: CustomBirdConfig;
@@ -34,8 +34,7 @@ export class Bird implements BirdEntity {
   poopTimer: number;
   justPooped: boolean = false;
 
-  // Cached Image Elements
-  private assetImgs: { head?: HTMLImageElement, body?: HTMLImageElement, wings?: HTMLImageElement, legs?: HTMLImageElement } = {};
+  private assetImgs: { head?: HTMLImageElement, body?: HTMLImageElement, wingsFront?: HTMLImageElement, wingsBack?: HTMLImageElement } = {};
 
   constructor(
     screenWidth: number, 
@@ -48,7 +47,6 @@ export class Bird implements BirdEntity {
     this.id = Math.random().toString(36).substr(2, 9);
     this.targetId = targetId;
     
-    // Pick side
     const side = Math.floor(Math.random() * 3); 
     const buffer = 150;
     if (side === 0) { this.originX = Math.random() * screenWidth; this.originY = -buffer; }
@@ -62,29 +60,34 @@ export class Bird implements BirdEntity {
     this.velocityX = 0;
     this.velocityY = 0;
     
-    // Check for custom configs
+    let speciesBaseSize = 12; 
+    let sizeVar = 0.2;
+
     if (customConfigs && customConfigs.length > 0 && Math.random() > 0.3) {
       const cfg = customConfigs[Math.floor(Math.random() * customConfigs.length)];
       this.customConfig = cfg;
       this.species = cfg.name;
       this.color = '#FFFFFF';
       this.loadAssets(cfg);
+      speciesBaseSize = cfg.baseSize * 0.6 * (cfg.globalScale || 1.0); 
+      sizeVar = cfg.sizeRange;
     } else {
       const speciesList: Species[] = ['sparrow', 'robin', 'bluejay', 'goldfinch', 'cardinal', 'swan', 'crow', 'eagle', 'owl', 'parrot', 'toucan'];
       this.species = speciesList[Math.floor(Math.random() * speciesList.length)];
       this.color = SPECIES_CONFIG[this.species as keyof typeof SPECIES_CONFIG].body;
+      
+      if (this.species === 'swan') speciesBaseSize = 28; 
+      else if (['eagle', 'crow'].includes(this.species)) speciesBaseSize = 18;
+      else if (['owl', 'parrot', 'toucan'].includes(this.species)) speciesBaseSize = 15;
     }
     
-    let baseScale = Math.max(handPixelWidth, 50) / 100 * 0.75;
-    if (this.targetId === 'Head') baseScale *= 0.5;
+    let baseScale = Math.max(handPixelWidth, 30) / 100 * 0.6;
+    if (this.targetId === 'Head' || this.targetId.includes('Shoulder')) {
+      baseScale *= 0.65;
+    }
 
-    let speciesBaseSize = 16;
-    if (this.species === 'swan') speciesBaseSize = 45; 
-    else if (['eagle', 'crow'].includes(this.species)) speciesBaseSize = 28;
-    else if (['owl', 'parrot', 'toucan'].includes(this.species)) speciesBaseSize = 22;
-
-    this.size = speciesBaseSize * baseScale * (0.85 + Math.random() * 0.3);
-    this.size = Math.min(Math.max(this.size, 6), 100); 
+    this.size = speciesBaseSize * baseScale * (1.0 + (Math.random() - 0.5) * 2 * sizeVar);
+    this.size = Math.min(Math.max(this.size, 2), 250); 
     
     this.wingSpan = this.size * 2.5;
     this.flapSpeed = (0.12 + Math.random() * 0.1) * (15 / this.size); 
@@ -92,15 +95,16 @@ export class Bird implements BirdEntity {
     this.flightWobbleOffset = Math.random() * 100;
     this.flightWobbleSpeed = 0.05 + Math.random() * 0.05;
 
-    this.state = BirdState.FLYING_IN;
-    this.perchOffset = forcedOffset !== undefined ? forcedOffset : (0.05 + Math.random() * 0.9); 
+    this.state = CreatureState.FLYING_IN;
+    this.perchOffset = forcedOffset !== undefined ? forcedOffset : (0.15 + Math.random() * 0.7);
+
     this.actionTimer = Math.random() * 100;
     this.variantSeed = Math.random();
-    this.poopTimer = 180 + Math.random() * 240; 
+    this.poopTimer = 240 + Math.random() * 300; 
   }
 
   private loadAssets(cfg: CustomBirdConfig) {
-    const keys: (keyof typeof cfg.assets)[] = ['head', 'body', 'wings', 'legs'];
+    const keys: (keyof typeof cfg.assets)[] = ['head', 'body', 'wingsFront', 'wingsBack'];
     keys.forEach(k => {
       if (cfg.assets[k]) {
         const img = new Image();
@@ -116,8 +120,9 @@ export class Bird implements BirdEntity {
     this.blinkTimer -= 1;
     if (this.blinkTimer < -10) this.blinkTimer = Math.random() * 200 + 100;
 
-    if (this.state === BirdState.FLYING_IN && perchTarget) {
-      const feetOffset = this.size * 1.5; 
+    if (this.state === CreatureState.FLYING_IN && perchTarget) {
+      // Offset slightly more so they truly sit on top
+      const feetOffset = this.size * 1.7; 
       const targetY = perchTarget.y - feetOffset;
       const dx = perchTarget.x - this.x;
       const dy = targetY - this.y;
@@ -129,30 +134,31 @@ export class Bird implements BirdEntity {
       this.velocityY += Math.sin(this.flapPhase) * 2; 
       this.x += this.velocityX;
       this.y += this.velocityY;
-      if (dist < 15) this.state = BirdState.PERCHED;
+      if (dist < 15) this.state = CreatureState.PERCHED;
     } 
-    else if (this.state === BirdState.PERCHED && perchTarget) {
+    else if (this.state === CreatureState.PERCHED && perchTarget) {
       this.poopTimer -= 1;
-      if (this.poopTimer <= 0) { this.justPooped = true; this.poopTimer = 300 + Math.random() * 300; }
+      if (this.poopTimer <= 0) { this.justPooped = true; this.poopTimer = 400 + Math.random() * 400; }
       if (siblings) {
         let push = 0;
         siblings.forEach(sib => {
-          if (sib.id === this.id || sib.targetId !== this.targetId || sib.state !== BirdState.PERCHED) return;
+          if (sib.id === this.id || sib.targetId !== this.targetId || sib.state !== CreatureState.PERCHED) return;
           const dist = Math.abs(this.perchOffset - sib.perchOffset);
-          const neededSep = (this.size + sib.size) / 250; 
+          const neededSep = (this.size + sib.size) / 200; 
           if (dist < neededSep) push += (this.perchOffset > sib.perchOffset ? 1 : -1) * (neededSep - dist) * 0.08;
         });
         this.perchOffset = Math.max(0.05, Math.min(0.95, this.perchOffset + push));
       }
       if (this.actionTimer <= 0) this.pickNewAction();
       this.x = this.x * 0.9 + perchTarget.x * 0.1;
+      
       const targetY = perchTarget.y - this.size * 1.6;
-      if (this.idleAction === 'hop' && this.actionTimer > 10) this.velocityY = -2.0;
+      if (this.idleAction === 'hop' && this.actionTimer > 10) this.velocityY = -1.8;
       this.y += this.velocityY;
       if (this.y >= targetY) { this.y = targetY; this.velocityY = 0; } 
-      else { this.velocityY += 0.5; }
+      else { this.velocityY += 0.45; }
     } 
-    else if (this.state === BirdState.FLYING_AWAY) {
+    else if (this.state === CreatureState.FLYING_AWAY) {
       const dx = this.originX - this.x, dy = this.originY - this.y;
       const angle = Math.atan2(dy, dx);
       this.velocityX += Math.cos(angle) * 0.5;
@@ -179,7 +185,7 @@ export class Bird implements BirdEntity {
     ctx.translate(this.x, this.y);
 
     let scaleX = 1;
-    if (this.state === BirdState.PERCHED) {
+    if (this.state === CreatureState.PERCHED) {
        scaleX = this.perchOffset < 0.5 ? 1 : -1;
        if (this.idleAction === 'look_back') scaleX *= -1;
     } else {
@@ -191,131 +197,201 @@ export class Bird implements BirdEntity {
     if (this.idleAction === 'peck') {
         rotation = this.actionTimer > 15 ? (35 - this.actionTimer) * 0.08 : this.actionTimer * 0.08;
     }
-    if (this.state !== BirdState.PERCHED) rotation = Math.min(Math.max(this.velocityY * 0.05, -0.6), 0.6);
+    if (this.state !== CreatureState.PERCHED) rotation = Math.min(Math.max(this.velocityY * 0.05, -0.6), 0.6);
     ctx.rotate(rotation);
 
     if (this.customConfig) {
-      // Pass rotation to drawCustom to fix "Cannot find name 'rotation'" error
-      this.drawCustom(ctx, rotation);
+      this.drawCustom(ctx, rotation, this.customConfig);
     } else {
-      this.drawProcedural(ctx);
+      this.drawProcedural(ctx, this.species, this.size, this.state, this.flapPhase, 100);
     }
 
     ctx.restore();
   }
 
-  // Updated signature to accept rotation value
-  private drawCustom(ctx: CanvasRenderingContext2D, rotation: number) {
-    const flap = Math.sin(this.flapPhase);
+  private drawCustom(ctx: CanvasRenderingContext2D, rotation: number, cfg: CustomBirdConfig) {
+    const flapMult = (cfg.flapAmplitude !== undefined ? cfg.flapAmplitude : 1.0);
+    const flap = Math.sin(this.flapPhase) * flapMult;
     const size = this.size;
+    const t = cfg.transforms;
 
-    // Legs
-    if (this.assetImgs.legs && this.state === BirdState.PERCHED) {
-      ctx.drawImage(this.assetImgs.legs, -size * 0.5, size * 0.5, size, size * 0.5);
+    // Global rotation applied to the whole stack
+    if (cfg.globalRotation) {
+        ctx.rotate(cfg.globalRotation * Math.PI / 180);
     }
 
-    // Wings (Back)
-    if (this.assetImgs.wings && this.state !== BirdState.PERCHED) {
+    // Wings Back Layer
+    if (this.assetImgs.wingsBack) {
       ctx.save();
-      const wingY = flap * size * 0.5;
-      ctx.translate(0, wingY);
+      const wt = t.wingsBack;
+      const wingY = flap * size * 0.4;
+      ctx.translate(wt.x * size * 0.05, (wt.y * size * 0.05) + wingY);
+      ctx.rotate((wt.rotate - 10 * flap) * Math.PI / 180);
       ctx.globalAlpha = 0.6;
-      ctx.drawImage(this.assetImgs.wings, -size * 1.5, -size * 1.5, size * 1.5, size * 1.5);
+      ctx.filter = 'brightness(70%)';
+      ctx.drawImage(this.assetImgs.wingsBack, -size * 1.5 * wt.scale, -size * 1.5 * wt.scale, size * 1.5 * wt.scale, size * 1.5 * wt.scale);
       ctx.restore();
     }
 
-    // Body
+    // Body Layer
     if (this.assetImgs.body) {
-      let bScale = this.idleAction === 'fluff' ? 1.1 : 1.0;
-      ctx.drawImage(this.assetImgs.body, -size, -size, size * 2 * bScale, size * 2 * bScale);
-    }
-
-    // Wings (Front)
-    if (this.assetImgs.wings) {
       ctx.save();
-      if (this.state === BirdState.PERCHED) {
-        ctx.drawImage(this.assetImgs.wings, -size * 0.8, -size * 0.4, size * 1.2, size * 0.8);
-      } else {
-        const wingY = flap * size * 0.8;
-        ctx.translate(0, -wingY);
-        ctx.drawImage(this.assetImgs.wings, -size * 0.2, -size * 1.5, size * 1.5, size * 1.5);
-      }
+      let bScale = (this.idleAction === 'fluff' ? 1.1 : 1.0) * t.body.scale;
+      ctx.translate(t.body.x * size * 0.05, t.body.y * size * 0.05);
+      ctx.rotate(t.body.rotate * Math.PI / 180);
+      ctx.drawImage(this.assetImgs.body, -size, -size, size * 2 * bScale, size * 2 * bScale);
       ctx.restore();
     }
 
-    // Head
+    // Wings Front Layer
+    if (this.assetImgs.wingsFront) {
+      ctx.save();
+      const wt = t.wingsFront;
+      const wingY = this.state === CreatureState.PERCHED ? 0 : flap * size * 0.8;
+      ctx.translate(wt.x * size * 0.05, (wt.y * size * 0.05) - wingY);
+      ctx.rotate((wt.rotate + 15 * flap) * Math.PI / 180);
+      ctx.drawImage(this.assetImgs.wingsFront, -size * 0.2 * wt.scale, -size * 1.5 * wt.scale, size * 1.5 * wt.scale, size * 1.5 * wt.scale);
+      ctx.restore();
+    }
+
+    // Head Layer
     if (this.assetImgs.head) {
       ctx.save();
-      ctx.translate(size * 0.6, -size * 0.6);
-      if (this.idleAction === 'peck') ctx.rotate(rotation);
-      ctx.drawImage(this.assetImgs.head, -size * 0.5, -size * 0.5, size, size);
+      ctx.translate((size * 0.6) + (t.head.x * size * 0.05), (-size * 0.6) + (t.head.y * size * 0.05));
+      ctx.rotate((t.head.rotate * Math.PI / 180) + (this.idleAction === 'peck' ? rotation : 0));
+      ctx.drawImage(this.assetImgs.head, -size * 0.5 * t.head.scale, -size * 0.5 * t.head.scale, size * t.head.scale, size * t.head.scale);
       ctx.restore();
     }
   }
 
-  private drawProcedural(ctx: CanvasRenderingContext2D) {
-    const config = SPECIES_CONFIG[this.species as keyof typeof SPECIES_CONFIG] || SPECIES_CONFIG.sparrow;
-    const flap = Math.sin(this.flapPhase);
+  public static drawCustomPreview(ctx: CanvasRenderingContext2D, cfg: CustomBirdConfig, size: number, flapPhase: number) {
+      const t = cfg.transforms;
+      const flapMult = (cfg.flapAmplitude !== undefined ? cfg.flapAmplitude : 1.0);
+      const flap = Math.sin(flapPhase) * flapMult;
+      
+      ctx.save();
+      ctx.translate(ctx.canvas.width/2, ctx.canvas.height/2);
 
-    // Legs
-    if (this.state === BirdState.PERCHED) {
+      // Apply Global Preview Rotation
+      if (cfg.globalRotation) {
+          ctx.rotate(cfg.globalRotation * Math.PI / 180);
+      }
+
+      const drawPartImg = (src: string | undefined, transform: any, isBack: boolean = false, isHead: boolean = false, isWing: boolean = false) => {
+          if (!src) return;
+          const img = new Image(); img.src = src;
+          ctx.save();
+          if (isHead) {
+              ctx.translate((size * 0.6) + (transform.x * size * 0.05), (-size * 0.6) + (transform.y * size * 0.05));
+              ctx.rotate(transform.rotate * Math.PI / 180);
+              ctx.drawImage(img, -size * 0.5 * transform.scale, -size * 0.5 * transform.scale, size * transform.scale, size * transform.scale);
+          } else if (isWing) {
+              const wingY = isBack ? flap * size * 0.4 : -flap * size * 0.8;
+              ctx.translate(transform.x * size * 0.05, (transform.y * size * 0.05) + wingY);
+              ctx.rotate((transform.rotate + (isBack ? -10 : 15) * flap) * Math.PI / 180);
+              if (isBack) { ctx.globalAlpha = 0.6; ctx.filter = 'brightness(70%)'; }
+              ctx.drawImage(img, -size * (isBack ? 1.5 : 0.2) * transform.scale, -size * 1.5 * transform.scale, size * 1.5 * transform.scale, size * 1.5 * transform.scale);
+          } else {
+              ctx.translate(transform.x * size * 0.05, transform.y * size * 0.05);
+              ctx.rotate(transform.rotate * Math.PI / 180);
+              ctx.drawImage(img, -size, -size, size * 2 * transform.scale, size * 2 * transform.scale);
+          }
+          ctx.restore();
+      };
+
+      drawPartImg(cfg.assets.wingsBack, t.wingsBack, true, false, true);
+      drawPartImg(cfg.assets.body, t.body);
+      drawPartImg(cfg.assets.wingsFront, t.wingsFront, false, false, true);
+      drawPartImg(cfg.assets.head, t.head, false, true, false);
+
+      ctx.restore();
+  }
+
+  public drawProcedural(ctx: CanvasRenderingContext2D, species: string, size: number, state: CreatureState, flapPhase: number, blinkTimer: number) {
+    const config = SPECIES_CONFIG[species as keyof typeof SPECIES_CONFIG] || SPECIES_CONFIG.sparrow;
+    const flap = Math.sin(flapPhase);
+
+    if (state === CreatureState.PERCHED) {
         ctx.strokeStyle = '#FFA000';
-        ctx.lineWidth = Math.max(1.5, this.size * 0.1);
+        ctx.lineWidth = Math.max(1.5, size * 0.1);
         ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.moveTo(this.size*0.1, this.size * 0.6); ctx.lineTo(this.size*0.15, this.size * 0.95 + 4); 
-        ctx.moveTo(-this.size*0.1, this.size * 0.6); ctx.lineTo(-this.size*0.15, this.size * 0.95 + 4);
+        ctx.moveTo(size*0.1, size * 0.6); ctx.lineTo(size*0.15, size * 0.95 + 4); 
+        ctx.moveTo(-size*0.1, size * 0.6); ctx.lineTo(-size*0.15, size * 0.95 + 4);
         ctx.stroke();
     }
 
-    // Tail
-    const tailGrad = ctx.createLinearGradient(-this.size, 0, 0, 0);
+    const tailGrad = ctx.createLinearGradient(-size, 0, 0, 0);
     tailGrad.addColorStop(0, config.wing); tailGrad.addColorStop(1, config.body);
     ctx.fillStyle = tailGrad;
     ctx.beginPath();
-    const tailY = (this.state !== BirdState.PERCHED) ? flap * 2 : 0;
-    ctx.moveTo(-this.size * 0.5, 0);
-    ctx.lineTo(-this.size * 1.6, this.size * 0.5 + tailY);
-    ctx.lineTo(-this.size * 0.5, this.size * 0.9);
+    const tailY = (state !== CreatureState.PERCHED) ? flap * 2 : 0;
+    ctx.moveTo(-size * 0.5, 0);
+    ctx.lineTo(-size * 1.6, size * 0.5 + tailY);
+    ctx.lineTo(-size * 0.5, size * 0.9);
     ctx.fill();
 
-    // Body
-    let bodyScale = this.idleAction === 'fluff' ? 1.15 : 1.0;
-    const bodyGrad = ctx.createRadialGradient(-this.size * 0.2, -this.size * 0.2, this.size * 0.2, 0, 0, this.size * 1.2 * bodyScale);
+    const bodyGrad = ctx.createRadialGradient(-size * 0.2, -size * 0.2, size * 0.2, 0, 0, size * 1.2);
     bodyGrad.addColorStop(0, config.belly); bodyGrad.addColorStop(0.4, config.body);
     ctx.fillStyle = bodyGrad; 
     ctx.beginPath();
-    ctx.ellipse(0, 0, this.size * 1.0 * bodyScale, this.size * 0.9 * bodyScale, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, size * 1.0, size * 0.9, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Head
-    const headX = this.size * 0.6, headY = -this.size * 0.6, headRad = this.size * 0.55;
+    const headX = size * 0.6, headY = -size * 0.6, headRad = size * 0.55;
     ctx.fillStyle = config.body;
     ctx.beginPath(); ctx.arc(headX, headY, headRad, 0, Math.PI * 2); ctx.fill();
 
-    // Eye
-    if (this.blinkTimer > 0) {
-        ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.arc(headX + this.size*0.2, headY - this.size*0.1, this.size*0.18, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(headX + this.size*0.25, headY - this.size*0.1, this.size*0.1, 0, Math.PI*2); ctx.fill();
+    if (blinkTimer > 0) {
+        ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.arc(headX + size*0.2, headY - size*0.1, size*0.18, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(headX + size*0.25, headY - size*0.1, size*0.1, 0, Math.PI*2); ctx.fill();
     }
 
-    // Beak
     ctx.fillStyle = config.beak;
     ctx.beginPath();
     ctx.moveTo(headX + headRad * 0.7, headY);
-    ctx.lineTo(headX + headRad * 1.6, headY + this.size * 0.1);
-    ctx.lineTo(headX + headRad * 0.8, headY + this.size * 0.3);
+    ctx.lineTo(headX + headRad * 1.6, headY + size * 0.1);
+    ctx.lineTo(headX + headRad * 0.8, headY + size * 0.3);
     ctx.fill();
 
-    // Wing
     ctx.fillStyle = config.wing;
     ctx.beginPath();
-    if (this.state === BirdState.PERCHED) {
-        ctx.ellipse(-this.size * 0.2, 0, this.size * 0.85, this.size * 0.55, 0.2, 0, Math.PI*2);
+    if (state === CreatureState.PERCHED) {
+        ctx.ellipse(-size * 0.2, 0, size * 0.85, size * 0.55, 0.2, 0, Math.PI*2);
     } else {
-        const wingY = flap * this.size * 1.2;
-        ctx.ellipse(this.size * 0.5, -this.size * 0.8 - wingY, this.size * 0.8, this.size * 0.3, -0.5, 0, Math.PI * 2);
+        const wingY = flap * size * 1.2;
+        ctx.ellipse(size * 0.5, -size * 0.8 - wingY, size * 0.8, size * 0.3, -0.5, 0, Math.PI * 2);
     }
     ctx.fill();
+  }
+
+  public static drawPart(ctx: CanvasRenderingContext2D, species: string, size: number, part: 'head' | 'body' | 'wings') {
+    const config = SPECIES_CONFIG[species as keyof typeof SPECIES_CONFIG] || SPECIES_CONFIG.sparrow;
+    ctx.save();
+    ctx.translate(ctx.canvas.width/2, ctx.canvas.height/2);
+    
+    if (part === 'body') {
+      const bodyGrad = ctx.createRadialGradient(-size * 0.2, -size * 0.2, size * 0.2, 0, 0, size * 1.2);
+      bodyGrad.addColorStop(0, config.belly); bodyGrad.addColorStop(0.4, config.body);
+      ctx.fillStyle = bodyGrad; 
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size * 1.0, size * 0.9, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (part === 'head') {
+      const headRad = size * 0.55;
+      ctx.fillStyle = config.body;
+      ctx.beginPath(); ctx.arc(0, 0, headRad, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.arc(size*0.2, -size*0.1, size*0.18, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(size*0.25, -size*0.1, size*0.1, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = config.beak;
+      ctx.beginPath();
+      ctx.moveTo(headRad * 0.7, 0); ctx.lineTo(headRad * 1.6, size * 0.1); ctx.lineTo(headRad * 0.8, size * 0.3); ctx.fill();
+    } else if (part === 'wings') {
+      ctx.fillStyle = config.wing;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size * 0.85, size * 0.55, 0.2, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 }

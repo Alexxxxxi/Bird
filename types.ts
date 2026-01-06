@@ -16,7 +16,7 @@ export interface Results {
   image: any;
 }
 
-export enum BirdState {
+export enum CreatureState {
   SPAWNING,
   FLYING_IN,
   PERCHED,
@@ -25,22 +25,42 @@ export enum BirdState {
 
 export type Species = 'sparrow' | 'robin' | 'bluejay' | 'goldfinch' | 'cardinal' | 'swan' | 'crow' | 'eagle' | 'owl' | 'parrot' | 'toucan' | string;
 
-export type IdleAction = 'idle' | 'peck' | 'hop' | 'look_back' | 'fluff';
+export type IdleAction = 'idle' | 'peck' | 'hop' | 'look_back' | 'fluff' | 'flutter';
+
+export interface PartTransform {
+  x: number;
+  y: number;
+  rotate: number;
+  scale: number;
+}
+
+export interface CustomBirdTransforms {
+  head: PartTransform;
+  body: PartTransform;
+  wingsFront: PartTransform;
+  wingsBack: PartTransform;
+}
 
 export interface CustomBirdAssets {
-  head?: string; // base64
+  head?: string;
   body?: string;
-  wings?: string;
-  legs?: string;
+  wingsFront?: string;
+  wingsBack?: string;
 }
 
 export interface CustomBirdConfig {
   id: string;
   name: string;
   assets: CustomBirdAssets;
+  transforms: CustomBirdTransforms;
+  globalScale: number;
+  globalRotation: number;
+  flapAmplitude: number;
+  baseSize: number;
+  sizeRange: number;
 }
 
-export interface BirdEntity {
+export interface CreatureEntity {
   id: string;
   targetId: string;
   x: number;
@@ -53,16 +73,12 @@ export interface BirdEntity {
   velocityY: number;
   color: string;
   size: number;
-  wingSpan: number;
-  flapSpeed: number;
-  flapPhase: number;
-  state: BirdState;
+  state: CreatureState;
   perchOffset: number;
   species: Species;
   idleAction: IdleAction;
   actionTimer: number;
   facing: number;
-  customConfig?: CustomBirdConfig;
 }
 
 export interface PoopEntity {
@@ -73,4 +89,14 @@ export interface PoopEntity {
   rotation: number;
   seed: number;
   scatterOffset: number;
+}
+
+export interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  size: number;
+  color: string;
 }
