@@ -16,9 +16,9 @@ export class Bird implements CreatureEntity {
   velocityY: number;
   velocityX: number;
   color: string;
-  size: number;
-  wingSpan: number;
-  flapSpeed: number;
+  size: number = 20;
+  wingSpan: number = 60;
+  flapSpeed: number = 0.01;
   flapPhase: number;
   state: CreatureState;
   perchOffset: number;
@@ -55,36 +55,38 @@ export class Bird implements CreatureEntity {
     this.velocityX = 0;
     this.velocityY = 0;
     
-    let speciesBaseSize = 14; 
+    this.flapPhase = Math.random() * Math.PI * 2;
+    this.state = CreatureState.FLYING_IN;
+    this.perchOffset = forcedOffset !== undefined ? forcedOffset : (0.1 + Math.random() * 0.8);
+    this.actionTimer = Math.random() * 1000;
+    this.variantSeed = Math.random();
 
     if (customConfigs && customConfigs.length > 0) {
       const cfg = customConfigs[Math.floor(Math.random() * customConfigs.length)];
-      this.customConfig = cfg;
-      this.species = cfg.name;
-      this.color = '#FFFFFF';
-      this.preloadImages(cfg);
-      speciesBaseSize = cfg.baseSize * 0.6 * (cfg.globalScale || 1.0); 
+      this.updateConfig(cfg);
     } else {
       this.species = 'sparrow';
       this.color = SPECIES_CONFIG.sparrow.body;
     }
-    
+  }
+
+  // New method to allow live updates from the UI
+  updateConfig(cfg: CustomBirdConfig) {
+    this.customConfig = cfg;
+    this.species = cfg.name;
+    this.color = '#FFFFFF';
+    this.preloadImages(cfg);
+
+    const speciesBaseSize = cfg.baseSize * 0.6 * (cfg.globalScale || 1.0); 
     let baseScale = 0.8;
     if (this.targetId === 'Head') baseScale = 0.4;
     else if (this.targetId.includes('Shoulder')) baseScale = 0.55;
 
-    this.size = speciesBaseSize * baseScale * (0.9 + Math.random() * 0.2);
-    this.size = Math.min(Math.max(this.size, 8), 250); 
+    this.size = speciesBaseSize * baseScale * (0.9 + (this.variantSeed || 0.1) * 0.2);
+    this.size = Math.min(Math.max(this.size, 1), 500); 
     
     this.wingSpan = this.size * 2.8;
-    this.flapSpeed = (0.012 + Math.random() * 0.006) * (20 / this.size); 
-    this.flapPhase = Math.random() * Math.PI * 2;
-
-    this.state = CreatureState.FLYING_IN;
-    this.perchOffset = forcedOffset !== undefined ? forcedOffset : (0.1 + Math.random() * 0.8);
-
-    this.actionTimer = Math.random() * 1000;
-    this.variantSeed = Math.random();
+    this.flapSpeed = (0.012 + (this.variantSeed || 0.1) * 0.006) * (20 / (this.size || 1));
   }
 
   private preloadImages(cfg: CustomBirdConfig) {
@@ -99,12 +101,10 @@ export class Bird implements CreatureEntity {
   }
 
   update(dt: number, perchTarget: { x: number, y: number } | null, siblings?: Bird[]) {
-    // Only advance flap phase if not perched or if actively hopping
     const isActivelyFlapping = this.state !== CreatureState.PERCHED || (this.idleAction === 'hop' && this.actionTimer > 0);
     if (isActivelyFlapping) {
       this.flapPhase += this.flapSpeed * dt;
     } else {
-      // Gradually reset flapPhase to a "folded" wing position (sin(0) = 0)
       this.flapPhase %= (Math.PI * 2);
       if (this.flapPhase > 0.1) this.flapPhase -= 0.01 * dt;
       else if (this.flapPhase < -0.1) this.flapPhase += 0.01 * dt;
@@ -142,7 +142,6 @@ export class Bird implements CreatureEntity {
       this.x = this.x + (perchTarget.x - this.x) * smoothFactor * 8;
       
       if (this.idleAction === 'hop' && this.actionTimer > 0) {
-        // Jumping up and falling back down
         if (this.actionTimer > 150) {
            this.velocityY = -0.12 * dt;
         } else {
@@ -168,7 +167,6 @@ export class Bird implements CreatureEntity {
 
   pickNewAction() {
       const roll = Math.random();
-      // Increased probability of jumping/hopping occasionally
       if (roll < 0.15) { this.idleAction = 'hop'; this.actionTimer = 300; this.velocityY = -2.5; } 
       else if (roll < 0.35) { this.idleAction = 'peck'; this.actionTimer = 800; } 
       else { this.idleAction = 'idle'; this.actionTimer = 1500 + Math.random() * 2000; }
@@ -194,16 +192,21 @@ export class Bird implements CreatureEntity {
   }
 
   private drawCustom(ctx: CanvasRenderingContext2D, rotation: number, cfg: CustomBirdConfig) {
-    // Only apply sine flap if not perched, unless performing a hop
     const isActivelyFlapping = this.state !== CreatureState.PERCHED || (this.idleAction === 'hop' && this.actionTimer > 0);
     const flap = isActivelyFlapping 
       ? Math.sin(this.flapPhase) * (cfg.flapAmplitude || 1.0)
-      : 0; // Stationary wings when perched
+      : 0; 
 
     const size = this.size;
     const t = cfg.transforms;
 
-    if (cfg.globalRotation) ctx.rotate(cfg.globalRotation * Math.PI / 180);
+    // Apply Global Offsets - scaled relative to size for intuitive control
+    if (cfg.globalX !== undefined || cfg.globalY !== undefined) {
+      ctx.translate((cfg.globalX || 0) * size * 0.05, (cfg.globalY || 0) * size * 0.05);
+    }
+    if (cfg.globalRotation) {
+      ctx.rotate(cfg.globalRotation * Math.PI / 180);
+    }
 
     const drawP = (u: string | undefined, tr: any, opts: { isWing?: boolean, isBack?: boolean, isHead?: boolean } = {}) => {
       if (!u || !ImageCache[u]) return;
@@ -231,42 +234,5 @@ export class Bird implements CreatureEntity {
     drawP(cfg.assets.body, t.body);
     drawP(cfg.assets.wingsFront, t.wingsFront, { isWing: true });
     drawP(cfg.assets.head, t.head, { isHead: true });
-  }
-
-  public static drawCustomPreview(ctx: CanvasRenderingContext2D, cfg: CustomBirdConfig, size: number, flapPhase: number) {
-      const t = cfg.transforms;
-      const flap = Math.sin(flapPhase) * (cfg.flapAmplitude || 1.0);
-      
-      ctx.save();
-      ctx.translate(ctx.canvas.width/2, ctx.canvas.height/2);
-      if (cfg.globalRotation) ctx.rotate(cfg.globalRotation * Math.PI / 180);
-
-      const drawP = (u: string | undefined, tr: any, opts: any = {}) => {
-          if (!u || !ImageCache[u]) return;
-          const img = ImageCache[u];
-          ctx.save();
-          if (opts.isHead) {
-              ctx.translate((size * 0.6) + (tr.x * size * 0.05), (-size * 0.6) + (tr.y * size * 0.05));
-              ctx.rotate(tr.rotate * Math.PI / 180);
-              ctx.drawImage(img, -size * 0.5 * tr.scale, -size * 0.5 * tr.scale, size * tr.scale, size * tr.scale);
-          } else if (opts.isWing) {
-              const wingY = opts.isBack ? flap * size * 0.4 : -flap * size * 0.8;
-              ctx.translate(tr.x * size * 0.05, (tr.y * size * 0.05) + wingY);
-              ctx.rotate((tr.rotate + (opts.isBack ? -10 : 15) * flap) * Math.PI / 180);
-              if (opts.isBack) { ctx.globalAlpha = 0.5; ctx.filter = 'brightness(60%)'; }
-              ctx.drawImage(img, -size * (opts.isBack ? 1.6 : 0.2) * tr.scale, -size * 1.6 * tr.scale, size * 1.6 * tr.scale, size * 1.6 * tr.scale);
-          } else {
-              ctx.translate(tr.x * size * 0.05, tr.y * size * 0.05);
-              ctx.rotate(tr.rotate * Math.PI / 180);
-              ctx.drawImage(img, -size, -size, size * 2 * tr.scale, size * 2 * tr.scale);
-          }
-          ctx.restore();
-      };
-
-      drawP(cfg.assets.wingsBack, t.wingsBack, { isWing: true, isBack: true });
-      drawP(cfg.assets.body, t.body);
-      drawP(cfg.assets.wingsFront, t.wingsFront, { isWing: true });
-      drawP(cfg.assets.head, t.head, { isHead: true });
-      ctx.restore();
   }
 }

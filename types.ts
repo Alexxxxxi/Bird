@@ -23,9 +23,11 @@ export enum CreatureState {
   FLYING_AWAY,
 }
 
+export type CreatureCategory = 'bird' | 'butterfly';
+
 export type Species = 'sparrow' | 'robin' | 'bluejay' | 'goldfinch' | 'cardinal' | 'swan' | 'crow' | 'eagle' | 'owl' | 'parrot' | 'toucan' | string;
 
-export type IdleAction = 'idle' | 'peck' | 'hop' | 'look_back' | 'fluff' | 'flutter';
+export type IdleAction = 'idle' | 'peck' | 'hop' | 'look_back' | 'fluff' | 'flutter' | 'suck';
 
 export interface PartTransform {
   x: number;
@@ -51,10 +53,13 @@ export interface CustomBirdAssets {
 export interface CustomBirdConfig {
   id: string;
   name: string;
+  category: CreatureCategory;
   assets: CustomBirdAssets;
   transforms: CustomBirdTransforms;
   globalScale: number;
   globalRotation: number;
+  globalX?: number; // New: Global horizontal offset
+  globalY?: number; // New: Global vertical offset
   flapAmplitude: number;
   baseSize: number;
   sizeRange: number;
