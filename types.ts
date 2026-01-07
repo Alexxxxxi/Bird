@@ -25,44 +25,26 @@ export enum CreatureState {
 
 export type CreatureCategory = 'bird' | 'butterfly';
 
-export type Species = 'sparrow' | 'robin' | 'bluejay' | 'goldfinch' | 'cardinal' | 'swan' | 'crow' | 'eagle' | 'owl' | 'parrot' | 'toucan' | string;
+export type Species = string;
 
 export type IdleAction = 'idle' | 'peck' | 'hop' | 'look_back' | 'fluff' | 'flutter' | 'suck';
-
-export interface PartTransform {
-  x: number;
-  y: number;
-  rotate: number;
-  scale: number;
-}
-
-export interface CustomBirdTransforms {
-  head: PartTransform;
-  body: PartTransform;
-  wingsFront: PartTransform;
-  wingsBack: PartTransform;
-}
-
-export interface CustomBirdAssets {
-  head?: string;
-  body?: string;
-  wingsFront?: string;
-  wingsBack?: string;
-}
 
 export interface CustomBirdConfig {
   id: string;
   name: string;
   category: CreatureCategory;
-  assets: CustomBirdAssets;
-  transforms: CustomBirdTransforms;
+  mainAsset: string; 
   globalScale: number;
   globalRotation: number;
-  globalX?: number; // New: Global horizontal offset
-  globalY?: number; // New: Global vertical offset
+  globalX?: number;
+  globalY?: number;
   flapAmplitude: number;
   baseSize: number;
   sizeRange: number;
+  // Sprite Sheet Configuration
+  isSpriteSheet?: boolean;
+  frameCount?: number;
+  frameRate?: number;
 }
 
 export interface CreatureEntity {
@@ -84,16 +66,6 @@ export interface CreatureEntity {
   idleAction: IdleAction;
   actionTimer: number;
   facing: number;
-}
-
-export interface PoopEntity {
-  id: string;
-  targetId: string;
-  offset: number;
-  scale: number;
-  rotation: number;
-  seed: number;
-  scatterOffset: number;
 }
 
 export interface Particle {

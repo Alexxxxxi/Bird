@@ -1,7 +1,40 @@
 
-import { CreatureEntity, CreatureState, Species, IdleAction, CustomBirdConfig, CustomBirdTransforms, Particle } from '../types';
+import { CreatureEntity, CreatureState, Species, IdleAction, CustomBirdConfig } from '../types';
 
-const ImageCache: Record<string, HTMLImageElement> = {};
+const GlobalAssetManager: Record<string, HTMLImageElement | HTMLVideoElement> = {};
+
+const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => {
+  if (GlobalAssetManager[url]) return GlobalAssetManager[url];
+  const isVideo = /\.(mp4|webm|mov)$/i.test(url);
+  let container = document.getElementById('ar-asset-pool');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'ar-asset-pool';
+    Object.assign(container.style, {
+      position: 'fixed', top: '0', left: '0', width: '1px', height: '1px',
+      opacity: '0.01', zIndex: '-1', pointerEvents: 'none', overflow: 'hidden'
+    });
+    document.body.appendChild(container);
+  }
+
+  if (isVideo) {
+    const video = document.createElement('video');
+    video.src = url;
+    video.muted = true; video.loop = true; video.autoplay = true;
+    video.setAttribute('playsinline', '');
+    container.appendChild(video);
+    video.play().catch(() => {});
+    GlobalAssetManager[url] = video;
+    return video;
+  } else {
+    const img = new Image();
+    img.src = url;
+    img.crossOrigin = "anonymous";
+    container.appendChild(img);
+    GlobalAssetManager[url] = img;
+    return img;
+  }
+};
 
 export class Butterfly implements CreatureEntity {
   id: string;
@@ -22,11 +55,13 @@ export class Butterfly implements CreatureEntity {
   idleAction: IdleAction = 'flutter';
   actionTimer: number = 0;
   facing: number = 1;
-  
-  private angle: number = Math.random() * Math.PI * 2;
-  private flapPhase: number = Math.random() * Math.PI * 2;
+  variantSeed: number = Math.random();
   private floatOffset: number = Math.random() * 1000;
-  private particles: Particle[] = [];
+  private hopY: number = 0;
+  private landedTime: number = 0;
+  private nextHopTime: number = 0;
+  private isHopping: boolean = false;
+  private hopProgress: number = 0;
   customConfig: CustomBirdConfig;
 
   constructor(
@@ -43,7 +78,7 @@ export class Butterfly implements CreatureEntity {
     this.color = '#FFFFFF';
     
     const side = Math.floor(Math.random() * 4);
-    const buffer = 100;
+    const buffer = 300;
     if (side === 0) { this.originX = Math.random() * screenWidth; this.originY = -buffer; }
     else if (side === 1) { this.originX = screenWidth + buffer; this.originY = Math.random() * screenHeight; }
     else if (side === 2) { this.originX = Math.random() * screenWidth; this.originY = screenHeight + buffer; }
@@ -55,143 +90,121 @@ export class Butterfly implements CreatureEntity {
     this.targetY = screenHeight / 2;
     this.velocityX = 0;
     this.velocityY = 0;
-    
     this.state = CreatureState.FLYING_IN;
     this.perchOffset = forcedOffset !== undefined ? forcedOffset : Math.random();
-
     this.updateConfig(config);
   }
 
   updateConfig(config: CustomBirdConfig) {
     this.customConfig = config;
     this.species = config.name;
-    this.size = config.baseSize * (0.8 + Math.random() * 0.4) * config.globalScale;
-    this.size = Math.min(Math.max(this.size, 1), 500);
-    this.preloadImages(config);
-  }
-
-  private preloadImages(cfg: CustomBirdConfig) {
-    const urls = Object.values(cfg.assets).filter(Boolean) as string[];
-    urls.forEach(u => {
-      if (!ImageCache[u]) {
-        const img = new Image();
-        img.src = u;
-        ImageCache[u] = img;
-      }
-    });
+    const randomScale = 1.0 + (this.variantSeed - 0.5) * 2 * (config.sizeRange || 0.2);
+    // 基础尺寸全局乘以 0.8 缩小 20%
+    this.size = config.baseSize * (config.globalScale || 1.0) * randomScale * 0.8;
+    forceAnimateInDOM(config.mainAsset);
   }
 
   update(dt: number, perchTarget: { x: number, y: number } | null, siblings?: any[]) {
-    this.angle += 0.002 * dt;
-    this.flapPhase += (this.state === CreatureState.PERCHED ? 0.003 : 0.015) * dt;
+    this.actionTimer += dt;
+    const smoothFactor = 1.0 - Math.pow(0.001, dt / 1000);
     
-    this.particles.forEach(p => {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.life -= 0.001 * dt;
-    });
-    this.particles = this.particles.filter(p => p.life > 0);
-
-    if (Math.random() > 0.9) {
-      this.particles.push({
-        x: this.x, y: this.y,
-        vx: (Math.random() - 0.5) * 0.5,
-        vy: (Math.random() - 0.5) * 0.5,
-        life: 1.0,
-        size: Math.random() * 2,
-        color: `hsla(${200 + Math.sin(this.angle)*40}, 100%, 80%, 0.4)`
-      });
-    }
-
-    if (this.state === CreatureState.FLYING_IN && perchTarget) {
-      const dx = perchTarget.x - this.x;
-      const dy = (perchTarget.y - 10) - this.y;
-      const dist = Math.sqrt(dx*dx + dy*dy);
-      
-      const noiseX = Math.sin(this.angle + this.floatOffset) * 1.5;
-      const noiseY = Math.cos(this.angle * 0.8 + this.floatOffset) * 1.5;
-      
-      this.velocityX = (dx * 0.03) + noiseX;
-      this.velocityY = (dy * 0.03) + noiseY;
-      
+    if (this.state === CreatureState.FLYING_IN) {
+      this.hopY = 0;
+      let tx, ty;
+      if (perchTarget && this.targetId !== "Searching") {
+        const swayX = Math.sin(this.actionTimer * 0.003 + this.floatOffset) * 20;
+        const swayY = Math.cos(this.actionTimer * 0.002) * 10;
+        tx = perchTarget.x + swayX;
+        ty = perchTarget.y + swayY;
+      } else {
+        const t = this.actionTimer * 0.0001;
+        tx = this.targetX + Math.sin(t + this.floatOffset) * 350;
+        ty = 100 + Math.cos(t) * 40;
+      }
+      this.velocityX = (tx - this.x) * 0.02;
+      this.velocityY = (ty - this.y) * 0.02;
       this.x += this.velocityX;
       this.y += this.velocityY;
-      
-      if (dist < 10) this.state = CreatureState.PERCHED;
+
+      if (perchTarget && Math.abs(tx - this.x) < 8 && this.targetId !== "Searching") {
+        this.state = CreatureState.PERCHED;
+        this.landedTime = this.actionTimer;
+        this.nextHopTime = this.actionTimer + 2000 + Math.random() * 4000;
+      }
     } 
     else if (this.state === CreatureState.PERCHED && perchTarget) {
-      const hoverY = Math.sin(this.angle) * 3;
-      this.x = this.x * 0.9 + perchTarget.x * 0.1;
-      this.y = this.y * 0.9 + (perchTarget.y - 12 + hoverY) * 0.1;
+      this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
+      this.y = this.y + (perchTarget.y - this.y) * (smoothFactor * 16);
+      this.velocityX = 0;
+      
+      if (!this.isHopping && this.actionTimer > this.nextHopTime) {
+        this.isHopping = true;
+        this.hopProgress = 0;
+      }
+
+      if (this.isHopping) {
+        this.hopProgress += dt * 0.006; 
+        this.hopY = -Math.abs(Math.sin(this.hopProgress)) * (this.size * 0.4);
+        if (this.hopProgress >= Math.PI) {
+          this.hopY = 0;
+          this.isHopping = false;
+          this.nextHopTime = this.actionTimer + 2500 + Math.random() * 5000;
+        }
+      } else {
+        this.hopY = 0;
+      }
     } 
+    else if (this.state === CreatureState.PERCHED && (!perchTarget || this.targetId === "Searching")) {
+      this.state = CreatureState.FLYING_IN;
+    }
     else if (this.state === CreatureState.FLYING_AWAY) {
-      this.velocityX += (Math.random() - 0.5) * 1;
-      this.velocityY -= 0.05 * dt;
+      this.hopY = 0;
+      this.isHopping = false;
+      this.velocityY -= 0.1 * dt;
       this.x += this.velocityX;
       this.y += this.velocityY;
+    }
+    if (Math.abs(this.velocityX) > 0.05) {
+      this.facing = this.velocityX > 0 ? -1 : 1;
     }
   }
 
   draw(ctx: CanvasRenderingContext2D) {
-    this.particles.forEach(p => {
-      ctx.save();
-      ctx.globalAlpha = p.life;
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    });
+    if (!this.customConfig) return;
+    const asset = GlobalAssetManager[this.customConfig.mainAsset] || forceAnimateInDOM(this.customConfig.mainAsset);
+    const isReady = (asset instanceof HTMLImageElement) ? asset.naturalWidth > 0 : (asset as HTMLVideoElement).readyState >= 2;
+    if (!isReady) return;
 
     ctx.save();
-    ctx.translate(this.x, this.y);
+    ctx.translate(this.x, this.y + this.hopY);
+    ctx.scale(this.facing, 1);
     
-    const rot = Math.atan2(this.velocityY, this.velocityX) + Math.PI/2;
-    ctx.rotate(rot * 0.3 + Math.sin(this.angle) * 0.1);
+    if (this.state === CreatureState.PERCHED) {
+      const stretch = Math.abs(this.hopY / this.size) * 0.3;
+      ctx.scale(1.0 - stretch, 1.0 + stretch);
+    }
 
-    this.drawCustom(ctx);
-    ctx.restore();
-  }
-
-  private drawCustom(ctx: CanvasRenderingContext2D) {
     const cfg = this.customConfig;
-    const flap = Math.sin(this.flapPhase);
-    const size = this.size;
-    const t = cfg.transforms;
-
-    // Apply Global Offsets
-    if (cfg.globalX !== undefined || cfg.globalY !== undefined) {
-      ctx.translate((cfg.globalX || 0) * size * 0.05, (cfg.globalY || 0) * size * 0.05);
+    if (cfg.isSpriteSheet && cfg.frameCount) {
+      const iw = (asset as HTMLImageElement).naturalWidth;
+      const ih = (asset as HTMLImageElement).naturalHeight;
+      const frameWidth = iw / cfg.frameCount;
+      const frameHeight = ih;
+      const frameRate = this.state === CreatureState.PERCHED && !this.isHopping ? 6 : (cfg.frameRate || 24);
+      const currentFrame = Math.floor((this.actionTimer * frameRate) / 1000) % cfg.frameCount;
+      const sx = currentFrame * frameWidth;
+      const aspect = frameWidth / frameHeight;
+      const drawHeight = this.size;
+      const drawWidth = drawHeight * aspect;
+      ctx.drawImage(asset, sx, 0, frameWidth, frameHeight, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+    } else {
+      const iw = (asset instanceof HTMLImageElement) ? asset.naturalWidth : (asset as HTMLVideoElement).videoWidth;
+      const ih = (asset instanceof HTMLImageElement) ? asset.naturalHeight : (asset as HTMLVideoElement).videoHeight;
+      const aspect = iw / ih;
+      const drawHeight = this.size;
+      const drawWidth = drawHeight * aspect;
+      ctx.drawImage(asset, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
     }
-    if (cfg.globalRotation) {
-      ctx.rotate(cfg.globalRotation * Math.PI / 180);
-    }
-
-    const drawP = (u: string | undefined, tr: any, opts: { isWing?: boolean, isBack?: boolean, isHead?: boolean } = {}) => {
-      if (!u || !ImageCache[u]) return;
-      ctx.save();
-      const img = ImageCache[u];
-      if (opts.isHead) {
-        ctx.translate(tr.x * size * 0.05, tr.y * size * 0.05);
-        ctx.drawImage(img, -size * 0.2 * tr.scale, -size * 0.2 * tr.scale, size * 0.4 * tr.scale, size * 0.4 * tr.scale);
-      } else if (opts.isWing) {
-        const flapScale = 0.2 + Math.abs(flap) * 0.8;
-        ctx.translate(tr.x * size * 0.05, tr.y * size * 0.05);
-        ctx.scale(opts.isBack ? -flapScale : flapScale, 1.0);
-        ctx.rotate(tr.rotate * Math.PI / 180);
-        if (opts.isBack) { ctx.globalAlpha = 0.7; ctx.filter = 'brightness(70%)'; }
-        ctx.drawImage(img, -size * 1.2 * tr.scale, -size * 1.2 * tr.scale, size * 1.2 * tr.scale, size * 1.2 * tr.scale);
-      } else {
-        ctx.translate(tr.x * size * 0.05, tr.y * size * 0.05);
-        ctx.rotate(tr.rotate * Math.PI / 180);
-        ctx.drawImage(img, -size * 0.5, -size * 0.5, size * tr.scale, size * tr.scale);
-      }
-      ctx.restore();
-    };
-
-    drawP(cfg.assets.wingsBack, t.wingsBack, { isWing: true, isBack: true });
-    drawP(cfg.assets.body, t.body);
-    drawP(cfg.assets.wingsFront, t.wingsFront, { isWing: true });
-    drawP(cfg.assets.head, t.head, { isHead: true });
+    ctx.restore();
   }
 }
