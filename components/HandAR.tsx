@@ -76,7 +76,7 @@ const HandAR: React.FC = () => {
   const getCurrentEphemeralConfig = (id: string, name: string): CustomBirdConfig => ({
     id, category: activeCategory, name: name || 'Spirit', mainAsset, 
     globalScale: newGlobalScale, globalRotation: newGlobalRotation, 
-    flapAmplitude: 1.0, baseSize: 80, sizeRange: 0.6, 
+    flapAmplitude: 1.0, baseSize: 80, sizeRange: 0.1, 
     isSpriteSheet: true, frameCount: 25, frameRate: 24
   });
 
@@ -131,31 +131,6 @@ const HandAR: React.FC = () => {
       const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
       ctx.translate(canvas.width, 0); ctx.scale(-1, 1);
       ctx.drawImage(video, ox, oy, dw, dh);
-      ctx.restore();
-
-      // DEBUG LANDMARKS DRAWING
-      ctx.save();
-      limbStatesRef.current.forEach((state, label) => {
-        if (state.missingFrames < 30) {
-          if (label.includes('Head')) {
-            ctx.fillStyle = 'rgba(255, 0, 0, 0.6)';
-            ctx.beginPath();
-            ctx.arc(state.centroid.x, state.centroid.y, 8, 0, Math.PI * 2);
-            ctx.fill();
-          } else if (label.includes('Shoulders')) {
-            const { leftTip, rightTip, neck } = state.rawPoints;
-            if (leftTip && rightTip && neck) {
-              ctx.strokeStyle = 'rgba(255, 255, 0, 0.8)';
-              ctx.lineWidth = 3;
-              ctx.beginPath();
-              ctx.moveTo(leftTip.x, leftTip.y);
-              ctx.lineTo(neck.x, neck.y);
-              ctx.lineTo(rightTip.x, rightTip.y);
-              ctx.stroke();
-            }
-          }
-        }
-      });
       ctx.restore();
 
       creaturesRef.current = creaturesRef.current.filter(c => {
@@ -258,12 +233,8 @@ const HandAR: React.FC = () => {
       const faceHeight = getDistance(forehead, chin);
       const faceWidth = getDistance(earL, earR);
       
-      // SHARPENED TENT GEOMETRY FOR SHOULDERS
-      // A. Neck Peak: Move it higher (0.05 instead of 0.15)
       const neck = { x: chin.x, y: chin.y + faceHeight * 0.05 };
-
-      // B. Shoulder Tips: Keep width 1.8, but increase drop to 0.6 for a steeper slope
-      const sWidth = faceWidth * 1.8; 
+      const sWidth = faceWidth * 1.5; 
       const sDrop = faceHeight * 0.6; 
 
       const leftTip = { x: chin.x - sWidth, y: neck.y + sDrop };
@@ -351,6 +322,42 @@ const HandAR: React.FC = () => {
     init();
     return () => { if (cameraRef.current) cameraRef.current.stop(); };
   }, [onResults, selectedDeviceId]);
+
+  useEffect(() => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas || !showAssetPanel) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    const cfg = getCurrentEphemeralConfig(editingId || 'preview', newName);
+    const preview = cfg.category === 'butterfly' 
+      ? new Butterfly(canvas.width, canvas.height, 'none', 0.5, cfg) 
+      : new Bird(canvas.width, canvas.height, 100, 'none', 0.5, [cfg]);
+    
+    let lastTime = performance.now();
+    let reqId: number;
+    
+    const renderPreview = (time: number) => {
+      const dt = time - lastTime;
+      lastTime = time;
+      
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+      
+      preview.state = CreatureState.PERCHED;
+      preview.update(dt, { x: cx, y: cy }, []);
+      
+      // Force position and draw
+      preview.x = cx;
+      preview.y = cy;
+      preview.draw(ctx);
+      
+      reqId = requestAnimationFrame(renderPreview);
+    };
+    reqId = requestAnimationFrame(renderPreview);
+    return () => cancelAnimationFrame(reqId);
+  }, [newGlobalScale, newGlobalRotation, mainAsset, showAssetPanel, activeCategory, newName, editingId]);
 
   useEffect(() => {
     const checkAssets = () => {
