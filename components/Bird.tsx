@@ -1,4 +1,3 @@
-
 import { CreatureEntity, CreatureState, Species, IdleAction, CustomBirdConfig } from '../types';
 
 const GlobalAssetManager: Record<string, HTMLImageElement | HTMLVideoElement> = {};
@@ -58,12 +57,15 @@ export class Bird implements CreatureEntity {
   actionTimer: number = 0;
   variantSeed: number;
   facing: number = 1;
+  opacity: number = 1.0;
 
   private hopY: number = 0;
   private landedTime: number = 0;
   private nextHopTime: number = 0;
   private isHopping: boolean = false;
   private hopProgress: number = 0;
+  private screenWidth: number;
+  private screenHeight: number;
 
   constructor(
     screenWidth: number, 
@@ -76,6 +78,8 @@ export class Bird implements CreatureEntity {
     this.id = Math.random().toString(36).substr(2, 9);
     this.targetId = targetId;
     this.variantSeed = Math.random();
+    this.screenWidth = screenWidth;
+    this.screenHeight = screenHeight;
     
     const side = Math.floor(Math.random() * 3); 
     const buffer = 400;
@@ -101,8 +105,9 @@ export class Bird implements CreatureEntity {
     this.customConfig = cfg;
     this.species = cfg.name;
     forceAnimateInDOM(cfg.mainAsset);
-    const randomScale = 1.0 + (this.variantSeed - 0.5) * 2 * (cfg.sizeRange || 0.2);
-    // 基础尺寸全局乘以 0.8 缩小 20%
+    const sizeVar = (cfg.sizeRange || 0.6);
+    const randomScale = 0.7 + (this.variantSeed * sizeVar * 1.5); 
+    
     const speciesBaseSize = cfg.baseSize * (cfg.globalScale || 1.0) * randomScale * 0.8; 
     
     let targetScale = 1.0;
@@ -116,6 +121,7 @@ export class Bird implements CreatureEntity {
     const smoothFactor = 1.0 - Math.pow(0.001, dt / 1000);
 
     if (this.state === CreatureState.FLYING_IN) {
+      this.opacity = 1.0;
       this.hopY = 0;
       this.isHopping = false;
       let tx, ty;
@@ -132,20 +138,22 @@ export class Bird implements CreatureEntity {
 
       const dx = tx - this.x, dy = ty - this.y;
       const dist = Math.sqrt(dx*dx + dy*dy);
-      const speed = Math.min(0.0018 * dist, 0.25) * dt; 
+      
+      const speed = Math.min(0.0006 * dist, 0.08) * dt; 
       const angle = Math.atan2(dy, dx);
       this.velocityX = Math.cos(angle) * speed;
       this.velocityY = Math.sin(angle) * speed;
       this.x += this.velocityX;
       this.y += this.velocityY;
 
-      if (perchTarget && dist < 8 && this.targetId !== "Searching") {
+      if (perchTarget && dist < 12 && this.targetId !== "Searching") {
         this.state = CreatureState.PERCHED;
         this.landedTime = this.actionTimer;
         this.nextHopTime = this.actionTimer + 1500 + Math.random() * 3000;
       }
     } 
     else if (this.state === CreatureState.PERCHED && perchTarget) {
+      this.opacity = 1.0;
       const targetY = perchTarget.y - (this.size * 0.35);
       this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
       this.y = this.y + (targetY - this.y) * (smoothFactor * 16);
@@ -168,15 +176,36 @@ export class Bird implements CreatureEntity {
         this.hopY = 0;
       }
     } 
-    else if (this.state === CreatureState.PERCHED && (!perchTarget || this.targetId === "Searching")) {
-      this.state = CreatureState.FLYING_IN;
-    }
     else if (this.state === CreatureState.FLYING_AWAY) {
+      const currentSpeed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
+      
+      if (currentSpeed < 5) {
+        const centerX = this.screenWidth / 2;
+        const centerY = this.screenHeight / 2;
+        let angle = Math.atan2(this.y - centerY, this.x - centerX);
+        
+        // 核心修改：确保逃跑角度不向下。在 atan2 结果中，正值表示向下。
+        // 如果角度 > 0 (向下)，则取反，使其变为向上。
+        if (angle > 0) {
+          angle = -angle;
+        }
+        
+        // 逃跑速度：8~16 范围，保持可见轨迹
+        const escapeSpeed = 8 + Math.random() * 8; 
+        
+        this.velocityX = Math.cos(angle) * escapeSpeed;
+        this.velocityY = Math.sin(angle) * escapeSpeed;
+        
+        // 双重保障：确保 Y 速度永远为负（向上）或 0
+        if (this.velocityY > 0) this.velocityY *= -1;
+      }
+      
+      this.x += this.velocityX;
+      this.y += this.velocityY;
+
       this.hopY = 0;
       this.isHopping = false;
-      this.velocityY -= 0.15 * dt;
-      this.x += this.velocityX * 1.5;
-      this.y += this.velocityY;
+      this.opacity = 1.0; 
     }
 
     if (Math.abs(this.velocityX) > 0.05) {
@@ -185,12 +214,13 @@ export class Bird implements CreatureEntity {
   }
 
   draw(ctx: CanvasRenderingContext2D) {
-    if (!this.customConfig) return;
+    if (!this.customConfig || this.opacity <= 0) return;
     const asset = GlobalAssetManager[this.customConfig.mainAsset] || forceAnimateInDOM(this.customConfig.mainAsset);
     const isReady = (asset instanceof HTMLImageElement) ? asset.naturalWidth > 0 : (asset as HTMLVideoElement).readyState >= 2;
     if (!isReady) return;
 
     ctx.save();
+    ctx.globalAlpha = this.opacity;
     ctx.translate(this.x, this.y + this.hopY);
     ctx.scale(this.facing, 1);
 

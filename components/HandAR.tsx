@@ -1,35 +1,34 @@
-
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Bird } from './Bird';
 import { Butterfly } from './Butterfly';
 import { CreatureState, CustomBirdConfig, CreatureCategory } from '../types';
-import { getDistance, getUpperHandHull, getPointOnPolyline } from '../utils/geometry';
+import { getDistance, lerp } from '../utils/geometry';
 import { PRESET_BIRDS, ASSET_LIBRARY } from '../constants';
 import { saveBirdToDB, getAllBirdsFromDB, deleteBirdFromDB } from '../utils/db';
 import { 
-  X, Settings2, Sparkles, Trash2, Edit2, Zap, RefreshCw, ChevronDown, Smile, ZapOff, Check
+  X, Settings2, Sparkles, Trash2, Edit2, Zap, RefreshCw, Smile, ZapOff
 } from 'lucide-react';
 
-declare global { interface Window { Holistic: any; Camera: any; } }
+declare global { interface Window { FaceMesh: any; Camera: any; } }
 
 type LimbStateData = { 
-  prevContour: {x: number, y: number}[]; 
+  rawPoints: Record<string, {x: number, y: number}>;
   missingFrames: number;
   centroid: {x: number, y: number};
   velocity: number;
 };
 
 const createInitialLimbState = (): LimbStateData => ({ 
-  prevContour: [], missingFrames: 0, centroid: {x: 0, y: 0}, velocity: 0 
+  rawPoints: {}, missingFrames: 0, centroid: {x: 0, y: 0}, velocity: 0 
 });
 
-const SHAKE_EXIT_THRESHOLD = 25.0; 
-// 定义每个区域的最大承载量
-const TARGET_CAPACITY: Record<string, number> = {
-  'Head': 3,
-  'Shoulders': 4,
-  'LeftHand': 2,
-  'RightHand': 2
+// Sensitivity config
+const VELOCITY_SMOOTHING = 0.7; 
+const MOVEMENT_DEADZONE = 2.0;  
+
+const THRESHOLDS: Record<string, number> = {
+  'Head': 15.0,
+  'Shoulders': 20.0
 };
 
 const HandAR: React.FC = () => {
@@ -40,8 +39,7 @@ const HandAR: React.FC = () => {
   const [showAssetPanel, setShowAssetPanel] = useState(false);
   const [customCreatures, setCustomCreatures] = useState<CustomBirdConfig[]>([]);
   const customCreaturesRef = useRef<CustomBirdConfig[]>([]);
-  const [isSmiling, setIsSmiling] = useState(false);
-  const [smileIntensity, setSmileIntensity] = useState(0);
+  const [anySmile, setAnySmile] = useState(false);
 
   const [activeCategory, setActiveCategory] = useState<CreatureCategory>('bird');
   const [newName, setNewName] = useState("");
@@ -52,23 +50,24 @@ const HandAR: React.FC = () => {
 
   const creaturesRef = useRef<any[]>([]);
   const limbStatesRef = useRef<Map<string, LimbStateData>>(new Map());
-  const holisticRef = useRef<any>(null);
+  const faceMeshRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
-  const isSmilingRef = useRef(false);
-  const lastSpawnTimeRef = useRef(0);
+  
+  // Track last spawn time per targetId to avoid flood
+  const lastSpawnTimesRef = useRef<Map<string, number>>(new Map());
 
   const getCurrentEphemeralConfig = (id: string, name: string): CustomBirdConfig => ({
     id, category: activeCategory, name: name || 'Spirit', mainAsset, 
     globalScale: newGlobalScale, globalRotation: newGlobalRotation, 
-    flapAmplitude: 1.0, baseSize: 80, sizeRange: 0.3, isSpriteSheet: true, frameCount: 25, frameRate: 24
+    flapAmplitude: 1.0, baseSize: 80, sizeRange: 0.6, 
+    isSpriteSheet: true, frameCount: 25, frameRate: 24
   });
 
-  const spawnCreature = useCallback((targetId: string = "Searching") => {
+  const spawnCreature = useCallback((targetId: string) => {
     const pool = customCreaturesRef.current;
     if (pool.length === 0 || !canvasRef.current) return;
     const cfg = pool[Math.floor(Math.random() * pool.length)];
-    // 为每只新生物分配随机的栖息偏移量，这样它们在连线上会自动错开
-    const randomOffset = 0.15 + Math.random() * 0.7;
+    const randomOffset = 0.1 + Math.random() * 0.8;
     const creature = cfg.category === 'butterfly' 
       ? new Butterfly(canvasRef.current.width, canvasRef.current.height, targetId, randomOffset, cfg) 
       : new Bird(canvasRef.current.width, canvasRef.current.height, 100, targetId, randomOffset, [cfg]);
@@ -84,7 +83,10 @@ const HandAR: React.FC = () => {
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
       const video = videoRef.current;
-      if (!canvas || !ctx || !video || video.readyState < 2) { frameId = requestAnimationFrame(render); return; }
+      if (!canvas || !ctx || !video || video.readyState < 2) { 
+        frameId = requestAnimationFrame(render); 
+        return; 
+      }
       
       if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
         canvas.width = window.innerWidth; canvas.height = window.innerHeight;
@@ -96,44 +98,57 @@ const HandAR: React.FC = () => {
       const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
       ctx.translate(canvas.width, 0); ctx.scale(-1, 1);
       ctx.drawImage(video, ox, oy, dw, dh);
+      ctx.restore();
 
-      const availableTargets = Array.from(limbStatesRef.current.entries())
-        .filter(([_, s]) => s.missingFrames < 15)
-        .map(([l]) => l);
-
-      // 智能目标分配：根据区域承载量分配
-      creaturesRef.current.forEach(c => {
-        if (c.targetId === "Searching" && availableTargets.length > 0) {
-          const validTarget = availableTargets.find(t => {
-            const currentCount = creaturesRef.current.filter(other => other.targetId === t).length;
-            return currentCount < (TARGET_CAPACITY[t] || 1);
-          });
-          if (validTarget) c.targetId = validTarget;
-        }
-      });
-
-      if (isSmilingRef.current && time - lastSpawnTimeRef.current > 1200 && creaturesRef.current.length < 10) {
-        const needy = availableTargets.find(t => {
-          const count = creaturesRef.current.filter(c => c.targetId === t).length;
-          return count < (TARGET_CAPACITY[t] || 1);
-        });
-        spawnCreature(needy || "Searching");
-        lastSpawnTimeRef.current = time;
-      }
-
-      const latestContours: Record<string, any[]> = {};
-      limbStatesRef.current.forEach((s, l) => { latestContours[l] = s.prevContour; });
-
+      // Update and Draw
       creaturesRef.current = creaturesRef.current.filter(c => {
-        const targetContour = latestContours[c.targetId];
-        const targetPoint = targetContour ? getPointOnPolyline(targetContour, c.perchOffset) : null;
+        let targetPoint = null;
+        const state = limbStatesRef.current.get(c.targetId);
+        
+        if (state && state.missingFrames < 30) {
+          const t = c.perchOffset;
+          // Perch logic for Face-based targets
+          if (c.targetId.includes('Head')) {
+            const { earL, earR } = state.rawPoints;
+            if (earL && earR) {
+              const faceWidth = getDistance(earL, earR);
+              const tx = lerp(earL.x, earR.x, t);
+              const baseTy = lerp(earL.y, earR.y, t) - faceWidth * 0.45;
+              const archY = Math.sin(t * Math.PI) * faceWidth * 0.35;
+              targetPoint = { x: tx, y: baseTy - archY };
+            }
+          } else if (c.targetId.includes('Shoulders')) {
+            const { shoulderL, shoulderR } = state.rawPoints;
+            if (shoulderL && shoulderR) {
+              const shoulderVec = { x: shoulderR.x - shoulderL.x, y: shoulderR.y - shoulderL.y };
+              let nx = shoulderVec.y, ny = -shoulderVec.x;
+              const len = Math.sqrt(nx * nx + ny * ny);
+              if (len > 0) { nx /= len; ny /= len; }
+              const baseX = lerp(shoulderL.x, shoulderR.x, t);
+              const baseY = lerp(shoulderL.y, shoulderR.y, t);
+              const shoulderWidth = getDistance(shoulderL, shoulderR);
+              const offset = shoulderWidth * 0.15;
+              targetPoint = { x: baseX + nx * offset, y: baseY + ny * offset };
+            }
+          }
+        } else {
+          if (state && state.missingFrames > 60 && c.state !== CreatureState.FLYING_AWAY) {
+            c.state = CreatureState.FLYING_AWAY;
+          }
+        }
+
         c.update(dt, targetPoint, creaturesRef.current);
         c.draw(ctx);
-        // 如果离场且超出范围，则移除
-        return !(c.state === CreatureState.FLYING_AWAY && (c.y < -500 || c.y > canvas.height + 500));
+        
+        const isOffScreen = (
+          c.y < -500 || 
+          c.y > canvas.height + 500 || 
+          c.x < -500 || 
+          c.x > canvas.width + 500
+        );
+        return !(c.state === CreatureState.FLYING_AWAY && isOffScreen);
       });
 
-      ctx.restore();
       frameId = requestAnimationFrame(render);
     };
     frameId = requestAnimationFrame(render);
@@ -142,97 +157,100 @@ const HandAR: React.FC = () => {
 
   const onResults = useCallback((results: any) => {
     const canvas = canvasRef.current;
-    if (!canvas || !results.image) return;
-    const ratio = Math.max(canvas.width / results.image.width, canvas.height / results.image.height);
-    const dw = results.image.width * ratio, dh = results.image.height * ratio;
+    if (!canvas || !results.multiFaceLandmarks) return;
+    const ratio = Math.max(canvas.width / 1280, canvas.height / 720); // Using standard camera res
+    const dw = 1280 * ratio, dh = 720 * ratio;
     const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-    const toPx = (l: any) => ({ x: l.x * dw + ox, y: l.y * dh + oy });
+    const toPx = (l: any) => ({ x: (1.0 - l.x) * dw + ox, y: l.y * dh + oy });
+    
     const seenThisFrame = new Set<string>();
+    let anyFaceSmiling = false;
 
-    // 微笑检测
-    if (results.faceLandmarks) {
-      const mouthL = results.faceLandmarks[61], mouthR = results.faceLandmarks[291];
-      const faceL = results.faceLandmarks[234], faceR = results.faceLandmarks[454];
-      if (mouthL && mouthR && faceL && faceR) {
-        const widthRatio = getDistance(mouthL, mouthR) / getDistance(faceL, faceR);
-        const smiling = widthRatio > 0.44; 
-        isSmilingRef.current = smiling; setIsSmiling(smiling);
-        setSmileIntensity(Math.min(1, Math.max(0, (widthRatio - 0.38) * 10)));
-      }
-    }
+    results.multiFaceLandmarks.forEach((landmarks: any[], faceIndex: number) => {
+      // Smile Detection
+      const mouthL = landmarks[61], mouthR = landmarks[291];
+      const faceL = landmarks[234], faceR = landmarks[454];
+      const widthRatio = getDistance(mouthL, mouthR) / getDistance(faceL, faceR);
+      const isFaceSmiling = widthRatio > 0.44; 
+      if (isFaceSmiling) anyFaceSmiling = true;
 
-    // 1. 处理头部 (生成圆润的头顶弧线)
-    if (results.faceLandmarks) {
-      const label = 'Head'; seenThisFrame.add(label);
-      if (!limbStatesRef.current.has(label)) limbStatesRef.current.set(label, createInitialLimbState());
-      const s = limbStatesRef.current.get(label)!;
-      const nose = toPx(results.faceLandmarks[1]);
-      const earL = toPx(results.faceLandmarks[234]);
-      const earR = toPx(results.faceLandmarks[454]);
+      // Update Head State
+      const headId = `Face_${faceIndex}_Head`;
+      seenThisFrame.add(headId);
+      const earL = toPx(landmarks[234]), earR = toPx(landmarks[454]);
+      updateLimbState(headId, { x: (earL.x + earR.x)/2, y: (earL.y + earR.y)/2 }, { earL, earR }, 'Head');
+
+      // Estimate Shoulders based on head
+      const shoulderId = `Face_${faceIndex}_Shoulders`;
+      seenThisFrame.add(shoulderId);
+      const chin = toPx(landmarks[152]);
+      const forehead = toPx(landmarks[10]);
+      const faceHeight = getDistance(forehead, chin);
       const faceWidth = getDistance(earL, earR);
-      const topOffset = faceWidth * 0.55;
       
-      const pL = { x: earL.x, y: earL.y - topOffset * 0.8 };
-      const pC = { x: (earL.x + earR.x)/2, y: Math.min(earL.y, earR.y) - topOffset };
-      const pR = { x: earR.x, y: earR.y - topOffset * 0.8 };
-      
-      s.centroid = pC;
-      s.prevContour = [pL, pC, pR];
-      s.missingFrames = 0;
-    }
+      const shoulderL = { x: chin.x - faceWidth * 0.7, y: chin.y + faceHeight * 0.4 };
+      const shoulderR = { x: chin.x + faceWidth * 0.7, y: chin.y + faceHeight * 0.4 };
+      updateLimbState(shoulderId, { x: chin.x, y: chin.y + faceHeight * 0.4 }, { shoulderL, shoulderR }, 'Shoulders');
 
-    // 2. 处理肩膀 (生成左右肩连线)
-    if (results.poseLandmarks) {
-      const L = results.poseLandmarks[11], R = results.poseLandmarks[12];
-      if (L?.visibility > 0.5 && R?.visibility > 0.5) {
-        const label = 'Shoulders'; seenThisFrame.add(label);
-        if (!limbStatesRef.current.has(label)) limbStatesRef.current.set(label, createInitialLimbState());
-        const s = limbStatesRef.current.get(label)!;
-        const pL = toPx(L), pR = toPx(R);
-        const nCentroid = { x: (pL.x + pR.x)/2, y: (pL.y + pR.y)/2 };
-        
-        s.velocity = s.velocity * 0.8 + getDistance(s.centroid, nCentroid) * 0.2;
-        s.centroid = nCentroid;
-        if (s.velocity > SHAKE_EXIT_THRESHOLD) {
-          creaturesRef.current.forEach(c => { if (c.targetId === label) c.state = CreatureState.FLYING_AWAY; });
+      // Spawn logic per smiling face
+      if (isFaceSmiling && creaturesRef.current.length < 50) {
+        const now = performance.now();
+        const lastHeadSpawn = lastSpawnTimesRef.current.get(headId) || 0;
+        if (now - lastHeadSpawn > 1000) {
+          const count = Math.floor(Math.random() * 2) + 1;
+          for(let i=0; i<count; i++) {
+            spawnCreature(Math.random() > 0.5 ? headId : shoulderId);
+          }
+          lastSpawnTimesRef.current.set(headId, now);
         }
-        // 肩膀感应线：在原始坐标基础上稍微上移，模拟落在衣服上
-        s.prevContour = [{ x: pL.x, y: pL.y - 15 }, { x: pR.x, y: pR.y - 15 }];
-        s.missingFrames = 0;
       }
-    }
+    });
 
-    // 3. 处理手部 (维持原有的上边缘检测)
-    const processHand = (landmarks: any, label: string) => {
-      if (!landmarks) return;
-      seenThisFrame.add(label);
+    setAnySmile(anyFaceSmiling);
+
+    function updateLimbState(label: string, nCentroid: {x: number, y: number}, rawPoints: any, category: string) {
       if (!limbStatesRef.current.has(label)) limbStatesRef.current.set(label, createInitialLimbState());
       const s = limbStatesRef.current.get(label)!;
-      const px = landmarks.map(toPx);
-      const nCentroid = px[0];
-      s.velocity = s.velocity * 0.7 + getDistance(s.centroid, nCentroid) * 0.3;
-      s.centroid = nCentroid;
-      if (s.velocity > SHAKE_EXIT_THRESHOLD) {
-        creaturesRef.current.forEach(c => { if (c.targetId === label) c.state = CreatureState.FLYING_AWAY; });
+      
+      const isNewOrReappearing = s.missingFrames > 5 || (s.centroid.x === 0 && s.centroid.y === 0);
+      if (!isNewOrReappearing) {
+        const rawDiff = getDistance(s.centroid, nCentroid);
+        const diff = rawDiff < MOVEMENT_DEADZONE ? 0 : rawDiff - MOVEMENT_DEADZONE;
+        s.velocity = s.velocity * VELOCITY_SMOOTHING + diff * (1 - VELOCITY_SMOOTHING);
+        
+        const threshold = THRESHOLDS[category] || 40.0;
+        if (s.velocity > threshold) {
+          creaturesRef.current.forEach(c => { 
+            if (c.targetId === label && c.state !== CreatureState.FLYING_AWAY) {
+              c.state = CreatureState.FLYING_AWAY; 
+            }
+          });
+        }
+      } else {
+        s.velocity = 0;
       }
-      s.prevContour = getUpperHandHull(px);
+      s.centroid = nCentroid;
+      s.rawPoints = rawPoints;
       s.missingFrames = 0;
-    };
-    processHand(results.leftHandLandmarks, 'LeftHand');
-    processHand(results.rightHandLandmarks, 'RightHand');
+    }
 
     limbStatesRef.current.forEach((s, l) => { if (!seenThisFrame.has(l)) s.missingFrames++; });
-  }, []);
+  }, [spawnCreature]);
 
   useEffect(() => {
     const init = async () => {
       try {
-        const holistic = new window.Holistic({ locateFile: (f: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}` });
-        holistic.setOptions({ modelComplexity: 0, smoothLandmarks: true, minDetectionConfidence: 0.5 });
-        holistic.onResults(onResults); holisticRef.current = holistic;
+        const faceMesh = new window.FaceMesh({ locateFile: (f: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
+        faceMesh.setOptions({ 
+          maxNumFaces: 4, 
+          refineLandmarks: true, 
+          minDetectionConfidence: 0.5, 
+          minTrackingConfidence: 0.5 
+        });
+        faceMesh.onResults(onResults); faceMeshRef.current = faceMesh;
         if (videoRef.current) {
           cameraRef.current = new window.Camera(videoRef.current, {
-            onFrame: async () => { if (holisticRef.current) await holisticRef.current.send({ image: videoRef.current! }); },
+            onFrame: async () => { if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoRef.current! }); },
             width: 1280, height: 720
           });
           cameraRef.current.start();
@@ -243,7 +261,7 @@ const HandAR: React.FC = () => {
           customCreaturesRef.current = await getAllBirdsFromDB(); 
         } else { customCreaturesRef.current = existing; }
         setCustomCreatures(customCreaturesRef.current); setIsLoading(false);
-      } catch (e) { console.error("Holistic Failed", e); }
+      } catch (e) { console.error("FaceMesh Failed", e); }
     };
     init();
   }, [onResults]);
@@ -273,18 +291,14 @@ const HandAR: React.FC = () => {
     <div className="relative w-screen h-screen bg-black overflow-hidden select-none">
       <video ref={videoRef} className="hidden" playsInline muted autoPlay />
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover" />
-      <div className="fixed opacity-0 pointer-events-none" style={{ left: '-9999px' }}>
-        {ASSET_LIBRARY.map(asset => <img key={asset.id} src={asset.url} alt="" />)}
-      </div>
       {isLoading && (
         <div className="absolute inset-0 z-[100] bg-black flex flex-col items-center justify-center text-teal-400 font-mono tracking-[0.5em] animate-pulse">
-          <RefreshCw className="animate-spin mb-4" /> INITIALIZING SENSORS
+          <RefreshCw className="animate-spin mb-4" /> INITIALIZING MULTI-FACE SENSORS
         </div>
       )}
       <div className="absolute inset-x-0 top-0 p-6 flex justify-between items-start pointer-events-none z-20">
-        <div className={`px-4 py-2 rounded-xl border pointer-events-auto backdrop-blur-xl transition-all duration-500 ${isSmiling ? 'bg-teal-500/10 border-teal-400/40 text-teal-300' : 'bg-black/40 border-white/5 text-zinc-600'}`}>
-          <div className="flex items-center gap-3">{isSmiling ? <Smile className="animate-pulse" /> : <ZapOff className="opacity-40" />}<span className="text-[10px] font-black uppercase tracking-widest">{isSmiling ? 'CALLING...' : 'SMILE TO SUMMON'}</span></div>
-          <div className="w-24 h-1 mt-2 bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-teal-400 transition-all duration-300" style={{ width: `${smileIntensity * 100}%` }} /></div>
+        <div className={`px-4 py-2 rounded-xl border pointer-events-auto backdrop-blur-xl transition-all duration-500 ${anySmile ? 'bg-teal-500/10 border-teal-400/40 text-teal-300' : 'bg-black/40 border-white/5 text-zinc-600'}`}>
+          <div className="flex items-center gap-3">{anySmile ? <Smile className="animate-pulse" /> : <ZapOff className="opacity-40" />}<span className="text-[10px] font-black uppercase tracking-widest">{anySmile ? 'SUMMONING...' : 'SMILE TO SUMMON'}</span></div>
         </div>
         <button onClick={() => setShowAssetPanel(true)} className="bg-black/40 p-4 rounded-2xl border border-white/10 text-teal-400 pointer-events-auto hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md"><Settings2 /></button>
       </div>

@@ -1,4 +1,3 @@
-
 import { CreatureEntity, CreatureState, Species, IdleAction, CustomBirdConfig } from '../types';
 
 const GlobalAssetManager: Record<string, HTMLImageElement | HTMLVideoElement> = {};
@@ -56,12 +55,15 @@ export class Butterfly implements CreatureEntity {
   actionTimer: number = 0;
   facing: number = 1;
   variantSeed: number = Math.random();
+  opacity: number = 1.0;
   private floatOffset: number = Math.random() * 1000;
   private hopY: number = 0;
   private landedTime: number = 0;
   private nextHopTime: number = 0;
   private isHopping: boolean = false;
   private hopProgress: number = 0;
+  private screenWidth: number;
+  private screenHeight: number;
   customConfig: CustomBirdConfig;
 
   constructor(
@@ -76,6 +78,8 @@ export class Butterfly implements CreatureEntity {
     this.customConfig = config;
     this.species = config.name;
     this.color = '#FFFFFF';
+    this.screenWidth = screenWidth;
+    this.screenHeight = screenHeight;
     
     const side = Math.floor(Math.random() * 4);
     const buffer = 300;
@@ -98,8 +102,8 @@ export class Butterfly implements CreatureEntity {
   updateConfig(config: CustomBirdConfig) {
     this.customConfig = config;
     this.species = config.name;
-    const randomScale = 1.0 + (this.variantSeed - 0.5) * 2 * (config.sizeRange || 0.2);
-    // 基础尺寸全局乘以 0.8 缩小 20%
+    const sizeVar = (config.sizeRange || 0.6);
+    const randomScale = 0.6 + (this.variantSeed * sizeVar * 1.8); 
     this.size = config.baseSize * (config.globalScale || 1.0) * randomScale * 0.8;
     forceAnimateInDOM(config.mainAsset);
   }
@@ -109,6 +113,7 @@ export class Butterfly implements CreatureEntity {
     const smoothFactor = 1.0 - Math.pow(0.001, dt / 1000);
     
     if (this.state === CreatureState.FLYING_IN) {
+      this.opacity = 1.0;
       this.hopY = 0;
       let tx, ty;
       if (perchTarget && this.targetId !== "Searching") {
@@ -121,18 +126,20 @@ export class Butterfly implements CreatureEntity {
         tx = this.targetX + Math.sin(t + this.floatOffset) * 350;
         ty = 100 + Math.cos(t) * 40;
       }
-      this.velocityX = (tx - this.x) * 0.02;
-      this.velocityY = (ty - this.y) * 0.02;
+      
+      this.velocityX = (tx - this.x) * 0.005;
+      this.velocityY = (ty - this.y) * 0.005;
       this.x += this.velocityX;
       this.y += this.velocityY;
 
-      if (perchTarget && Math.abs(tx - this.x) < 8 && this.targetId !== "Searching") {
+      if (perchTarget && Math.abs(tx - this.x) < 12 && this.targetId !== "Searching") {
         this.state = CreatureState.PERCHED;
         this.landedTime = this.actionTimer;
         this.nextHopTime = this.actionTimer + 2000 + Math.random() * 4000;
       }
     } 
     else if (this.state === CreatureState.PERCHED && perchTarget) {
+      this.opacity = 1.0;
       this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
       this.y = this.y + (perchTarget.y - this.y) * (smoothFactor * 16);
       this.velocityX = 0;
@@ -154,15 +161,34 @@ export class Butterfly implements CreatureEntity {
         this.hopY = 0;
       }
     } 
-    else if (this.state === CreatureState.PERCHED && (!perchTarget || this.targetId === "Searching")) {
-      this.state = CreatureState.FLYING_IN;
-    }
     else if (this.state === CreatureState.FLYING_AWAY) {
-      this.hopY = 0;
-      this.isHopping = false;
-      this.velocityY -= 0.1 * dt;
+      const currentSpeed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
+      
+      if (currentSpeed < 5) {
+        const centerX = this.screenWidth / 2;
+        const centerY = this.screenHeight / 2;
+        let angle = Math.atan2(this.y - centerY, this.x - centerX);
+        
+        // 核心修改：确保逃跑角度不向下。在 atan2 结果中，正值表示向下。
+        if (angle > 0) {
+          angle = -angle;
+        }
+        
+        const escapeSpeed = 8 + Math.random() * 8; 
+        
+        this.velocityX = Math.cos(angle) * escapeSpeed;
+        this.velocityY = Math.sin(angle) * escapeSpeed;
+        
+        // 双重保障：确保 Y 速度永远为负（向上）或 0
+        if (this.velocityY > 0) this.velocityY *= -1;
+      }
+      
       this.x += this.velocityX;
       this.y += this.velocityY;
+
+      this.hopY = 0;
+      this.isHopping = false;
+      this.opacity = 1.0; 
     }
     if (Math.abs(this.velocityX) > 0.05) {
       this.facing = this.velocityX > 0 ? -1 : 1;
@@ -170,12 +196,13 @@ export class Butterfly implements CreatureEntity {
   }
 
   draw(ctx: CanvasRenderingContext2D) {
-    if (!this.customConfig) return;
+    if (!this.customConfig || this.opacity <= 0) return;
     const asset = GlobalAssetManager[this.customConfig.mainAsset] || forceAnimateInDOM(this.customConfig.mainAsset);
     const isReady = (asset instanceof HTMLImageElement) ? asset.naturalWidth > 0 : (asset as HTMLVideoElement).readyState >= 2;
     if (!isReady) return;
 
     ctx.save();
+    ctx.globalAlpha = this.opacity;
     ctx.translate(this.x, this.y + this.hopY);
     ctx.scale(this.facing, 1);
     
