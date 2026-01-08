@@ -30,10 +30,8 @@ const THRESHOLDS: Record<string, number> = {
   'Shoulders': 20.0
 };
 
-// Robust dynamic script loader
 const loadScript = (src: string): Promise<void> => {
   return new Promise((resolve, reject) => {
-    // Check if script is already present
     const existing = document.querySelector(`script[src="${src}"]`);
     if (existing) {
       resolve();
@@ -57,6 +55,7 @@ const HandAR: React.FC = () => {
   const [customCreatures, setCustomCreatures] = useState<CustomBirdConfig[]>([]);
   const customCreaturesRef = useRef<CustomBirdConfig[]>([]);
   const [anySmile, setAnySmile] = useState(false);
+  const [assetStatus, setAssetStatus] = useState("Checking Assets...");
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
@@ -134,6 +133,33 @@ const HandAR: React.FC = () => {
       ctx.drawImage(video, ox, oy, dw, dh);
       ctx.restore();
 
+      // DEBUG LANDMARKS DRAWING
+      ctx.save();
+      limbStatesRef.current.forEach((state, label) => {
+        if (state.missingFrames < 30) {
+          if (label.includes('Head')) {
+            // Draw Head Centroid (Red Circle)
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.6)';
+            ctx.beginPath();
+            ctx.arc(state.centroid.x, state.centroid.y, 8, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (label.includes('Shoulders')) {
+            const { leftTip, rightTip, neck } = state.rawPoints;
+            if (leftTip && rightTip && neck) {
+              // Draw Shoulder Line (Yellow)
+              ctx.strokeStyle = 'rgba(255, 255, 0, 0.8)';
+              ctx.lineWidth = 3;
+              ctx.beginPath();
+              ctx.moveTo(leftTip.x, leftTip.y);
+              ctx.lineTo(neck.x, neck.y);
+              ctx.lineTo(rightTip.x, rightTip.y);
+              ctx.stroke();
+            }
+          }
+        }
+      });
+      ctx.restore();
+
       creaturesRef.current = creaturesRef.current.filter(c => {
         let targetPoint = null;
         const state = limbStatesRef.current.get(c.targetId);
@@ -153,14 +179,12 @@ const HandAR: React.FC = () => {
             const { leftTip, rightTip, neck } = state.rawPoints;
             if (leftTip && rightTip && neck) {
               if (t <= 0.5) {
-                // 左坡：从肩膀尖端爬升到脖子 (t: 0 -> 0.5 映射为 0 -> 1)
                 const localT = t * 2;
                 targetPoint = { 
                   x: lerp(leftTip.x, neck.x, localT), 
                   y: lerp(leftTip.y, neck.y, localT) 
                 };
               } else {
-                // 右坡：从脖子下降到肩膀尖端 (t: 0.5 -> 1 映射为 0 -> 1)
                 const localT = (t - 0.5) * 2;
                 targetPoint = { 
                   x: lerp(neck.x, rightTip.x, localT), 
@@ -174,6 +198,8 @@ const HandAR: React.FC = () => {
         }
 
         c.update(dt, targetPoint, creaturesRef.current);
+        
+        // Draw creature debug (Green square if asset failed)
         c.draw(ctx);
         
         const isOffScreen = (
@@ -191,20 +217,34 @@ const HandAR: React.FC = () => {
 
   const onResults = useCallback((results: any) => {
     const canvas = canvasRef.current;
-    if (!canvas || !results.multiFaceLandmarks) {
+    const video = videoRef.current;
+    if (!canvas || !video || !results.multiFaceLandmarks) {
       setAnySmile(false);
       return;
     }
-    const ratio = Math.max(canvas.width / 1280, canvas.height / 720); 
-    const dw = 1280 * ratio, dh = 720 * ratio;
-    const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-    const toPx = (l: any) => ({ x: (1.0 - l.x) * dw + ox, y: l.y * dh + oy });
+
+    // ROBUST COORDINATE MAPPING (Better aspect ratio handling)
+    const canvasW = canvas.width;
+    const canvasH = canvas.height;
+    const videoW = video.videoWidth || 1280;
+    const videoH = video.videoHeight || 720;
+
+    const ratio = Math.max(canvasW / videoW, canvasH / videoH); 
+    const dw = videoW * ratio;
+    const dh = videoH * ratio;
+    const ox = (canvasW - dw) / 2;
+    const oy = (canvasH - dh) / 2;
+
+    // Normalizing landmarks: 1.0 - x for mirroring
+    const toPx = (l: any) => ({ 
+      x: (1.0 - l.x) * dw + ox, 
+      y: l.y * dh + oy 
+    });
     
     const seenThisFrame = new Set<string>();
     let frameAnySmile = false;
 
     results.multiFaceLandmarks.forEach((landmarks: any[], faceIndex: number) => {
-      // SMILE DETECTION - Threshold 0.38
       const mouthL = landmarks[61], mouthR = landmarks[291];
       const faceL = landmarks[234], faceR = landmarks[454];
       const widthRatio = getDistance(mouthL, mouthR) / getDistance(faceL, faceR);
@@ -214,7 +254,8 @@ const HandAR: React.FC = () => {
       const headId = `Face_${faceIndex}_Head`;
       seenThisFrame.add(headId);
       const earL = toPx(landmarks[234]), earR = toPx(landmarks[454]);
-      updateLimbState(headId, { x: (earL.x + earR.x)/2, y: (earL.y + earR.y)/2 }, { earL, earR }, 'Head');
+      const faceCenter = { x: (earL.x + earR.x)/2, y: (earL.y + earR.y)/2 };
+      updateLimbState(headId, faceCenter, { earL, earR }, 'Head');
 
       const shoulderId = `Face_${faceIndex}_Shoulders`;
       seenThisFrame.add(shoulderId);
@@ -223,18 +264,13 @@ const HandAR: React.FC = () => {
       const faceHeight = getDistance(forehead, chin);
       const faceWidth = getDistance(earL, earR);
       
-      // REFINED SHOULDER TENT CALCULATION
-      // A. 定义中间顶点 (Neck)：紧贴下巴下方
       const neck = { x: chin.x, y: chin.y + faceHeight * 0.15 };
+      const sWidth = faceWidth * 1.8; 
+      const sDrop = faceHeight * 0.35; 
 
-      // B. 定义两侧端点 (Tips)：收窄宽度系数从 2.2 降低到 1.8，匹配身体轮廓
-      const shoulderWidth = faceWidth * 1.8; 
-      const shoulderDrop = faceHeight * 0.35; 
+      const leftTip = { x: chin.x - sWidth, y: neck.y + sDrop };
+      const rightTip = { x: chin.x + sWidth, y: neck.y + sDrop };
 
-      const leftTip = { x: chin.x - shoulderWidth, y: neck.y + shoulderDrop };
-      const rightTip = { x: chin.x + shoulderWidth, y: neck.y + shoulderDrop };
-
-      // 将这三个点都存入 rawPoints 并更新位置状态
       updateLimbState(shoulderId, neck, { leftTip, rightTip, neck }, 'Shoulders');
 
       if (isFaceSmiling && creaturesRef.current.length < 40) {
@@ -274,17 +310,10 @@ const HandAR: React.FC = () => {
     const init = async () => {
       try {
         setIsLoading(true);
-        
-        // 1. DYNAMICALLY LOAD LATEST SCRIPTS
         const faceMeshScript = "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js";
         const cameraUtilsScript = "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
-        
-        await Promise.all([
-          loadScript(faceMeshScript),
-          loadScript(cameraUtilsScript)
-        ]);
+        await Promise.all([loadScript(faceMeshScript), loadScript(cameraUtilsScript)]);
 
-        // 2. INITIALIZE FACEMESH (using latest CDN pointers)
         if (!faceMeshRef.current && window.FaceMesh) {
           const faceMesh = new window.FaceMesh({ 
             locateFile: (f: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` 
@@ -299,7 +328,6 @@ const HandAR: React.FC = () => {
           faceMeshRef.current = faceMesh;
         }
 
-        // 3. CAMERA SETUP
         if (cameraRef.current) await cameraRef.current.stop();
         if (videoRef.current && window.Camera) {
           cameraRef.current = new window.Camera(videoRef.current, {
@@ -326,35 +354,41 @@ const HandAR: React.FC = () => {
     return () => { if (cameraRef.current) cameraRef.current.stop(); };
   }, [onResults, selectedDeviceId]);
 
+  // Asset Monitoring
   useEffect(() => {
-    const canvas = previewCanvasRef.current;
-    if (!canvas || !showAssetPanel) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const cfg = getCurrentEphemeralConfig(editingId || 'preview', newName);
-    const preview = cfg.category === 'butterfly' 
-      ? new Butterfly(canvas.width, canvas.height, 'none', 0.5, cfg) 
-      : new Bird(canvas.width, canvas.height, 100, 'none', 0.5, [cfg]);
-    let reqId: number;
-    const renderPreview = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      preview.x = canvas.width / 2; preview.y = canvas.height / 2; preview.state = CreatureState.PERCHED;
-      preview.update(16, { x: canvas.width / 2, y: canvas.height / 2 }, []);
-      preview.draw(ctx);
-      reqId = requestAnimationFrame(renderPreview);
+    const checkAssets = () => {
+      const activeAsset = mainAsset;
+      const pool = document.getElementById('ar-asset-pool');
+      if (!pool) {
+        setAssetStatus("Initializing Pool...");
+        return;
+      }
+      const item = Array.from(pool.children).find((c: any) => c.src === activeAsset) as any;
+      if (!item) {
+        setAssetStatus("Asset Pending...");
+      } else {
+        const ready = (item instanceof HTMLImageElement) ? item.naturalWidth > 0 : (item as HTMLVideoElement).readyState >= 2;
+        setAssetStatus(ready ? "Asset Ready" : "Loading Asset...");
+      }
     };
-    reqId = requestAnimationFrame(renderPreview);
-    return () => cancelAnimationFrame(reqId);
-  }, [newGlobalScale, newGlobalRotation, mainAsset, showAssetPanel, activeCategory, newName, editingId]);
+    const timer = setInterval(checkAssets, 500);
+    return () => clearInterval(timer);
+  }, [mainAsset]);
 
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden select-none">
       <video ref={videoRef} className="hidden" playsInline muted autoPlay />
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover" />
       
-      {/* MINIMAL STATUS DOT (TOP LEFT) */}
-      <div className="absolute top-6 left-6 z-30 pointer-events-none">
+      {/* STATUS INDICATORS */}
+      <div className="absolute top-6 left-6 z-30 pointer-events-none flex items-center gap-4">
         <div className={`w-3 h-3 rounded-full transition-all duration-300 ${anySmile ? 'bg-teal-400 shadow-[0_0_10px_#2dd4bf]' : 'bg-white/20'}`} />
+        <span className="text-white/40 text-[10px] font-mono tracking-widest uppercase">Smile Sensor</span>
+      </div>
+
+      <div className="absolute bottom-6 left-6 z-30 pointer-events-none font-mono text-[9px] text-white/30 uppercase tracking-[0.2em] flex flex-col gap-1">
+        <div>Status: {assetStatus}</div>
+        <div>Active DNA: {customCreatures.length} units</div>
       </div>
 
       <div className="absolute top-0 right-0 p-6 z-20 pointer-events-none">
