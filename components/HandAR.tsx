@@ -83,13 +83,25 @@ const HandAR: React.FC = () => {
   const spawnCreature = useCallback((targetId: string) => {
     const pool = customCreaturesRef.current;
     if (pool.length === 0 || !canvasRef.current) return;
-    const cfg = pool[Math.floor(Math.random() * pool.length)];
+    
+    // 获取一个随机的基础配置
+    const baseCfg = pool[Math.floor(Math.random() * pool.length)];
+    
+    // 强制使用当前选中的素材 URL，覆盖数据库中的旧值，确保在 AR 模式下一定能加载
+    const cfg: CustomBirdConfig = {
+      ...baseCfg,
+      mainAsset: mainAsset, 
+      isSpriteSheet: true,  
+      frameCount: 25        
+    };
+
     const randomOffset = 0.1 + Math.random() * 0.8;
     const creature = cfg.category === 'butterfly' 
       ? new Butterfly(canvasRef.current.width, canvasRef.current.height, targetId, randomOffset, cfg) 
       : new Bird(canvasRef.current.width, canvasRef.current.height, 100, targetId, randomOffset, [cfg]);
+    
     creaturesRef.current.push(creature);
-  }, []);
+  }, [mainAsset]); // mainAsset 变化时重新生成函数，确保持续使用最新 URL
 
   useEffect(() => {
     const getDevices = async () => {

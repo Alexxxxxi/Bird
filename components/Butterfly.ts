@@ -33,7 +33,6 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
     img.crossOrigin = "anonymous";
     img.setAttribute('data-src', url);
     
-    // Handle loading errors by falling back to base64
     img.onerror = () => {
       if (img.src !== FALLBACK_PHOENIX_BASE64) {
         console.warn(`Butterfly asset load failed, using fallback for: ${url}`);
@@ -116,7 +115,6 @@ export class Butterfly implements CreatureEntity {
     this.species = config.name;
     const sizeVar = (config.sizeRange || 0.6);
     const randomScale = 0.6 + (this.variantSeed * sizeVar * 1.8); 
-    // 将系数从 0.8 调整为 0.56 (即原始尺寸的 70%)
     this.size = config.baseSize * (config.globalScale || 1.0) * randomScale * 0.56;
     forceAnimateInDOM(config.mainAsset);
   }
@@ -129,7 +127,7 @@ export class Butterfly implements CreatureEntity {
       this.opacity = 1.0;
       this.hopY = 0;
       let tx, ty;
-      if (perchTarget && this.targetId !== "Searching") {
+      if (perchTarget && this.targetId !== "Searching" && this.targetId !== "none") {
         const swayX = Math.sin(this.actionTimer * 0.003 + this.floatOffset) * 20;
         const swayY = Math.cos(this.actionTimer * 0.002) * 10;
         tx = perchTarget.x + swayX;
@@ -145,7 +143,7 @@ export class Butterfly implements CreatureEntity {
       this.x += this.velocityX;
       this.y += this.velocityY;
 
-      if (perchTarget && Math.abs(tx - this.x) < 12 && this.targetId !== "Searching") {
+      if (perchTarget && Math.abs(tx - this.x) < 12 && this.targetId !== "Searching" && this.targetId !== "none") {
         this.state = CreatureState.PERCHED;
         this.landedTime = this.actionTimer;
         this.nextHopTime = this.actionTimer + 2000 + Math.random() * 4000;
@@ -200,7 +198,18 @@ export class Butterfly implements CreatureEntity {
   draw(ctx: CanvasRenderingContext2D) {
     if (!this.customConfig || this.opacity <= 0) return;
     const asset = GlobalAssetManager[this.customConfig.mainAsset] || forceAnimateInDOM(this.customConfig.mainAsset);
-    const isReady = (asset instanceof HTMLImageElement) ? asset.naturalWidth > 0 : (asset as HTMLVideoElement).readyState >= 2;
+    
+    let isReady = false;
+    let iw = 0, ih = 0;
+    if (asset instanceof HTMLImageElement) {
+      isReady = asset.complete && asset.naturalWidth > 0;
+      iw = asset.naturalWidth;
+      ih = asset.naturalHeight;
+    } else if (asset instanceof HTMLVideoElement) {
+      isReady = asset.readyState >= 2 && asset.videoWidth > 0;
+      iw = asset.videoWidth;
+      ih = asset.videoHeight;
+    }
 
     ctx.save();
     ctx.globalAlpha = this.opacity;
@@ -213,41 +222,43 @@ export class Butterfly implements CreatureEntity {
     }
 
     if (!isReady) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.fillStyle = 'rgba(45, 212, 191, 0.1)';
       ctx.beginPath();
       ctx.arc(0, 0, this.size, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = '#2dd4bf';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(45, 212, 191, 0.4)';
+      ctx.setLineDash([4, 4]);
       ctx.stroke();
       ctx.restore();
       return;
     }
 
     const cfg = this.customConfig;
-    if (cfg.isSpriteSheet && cfg.frameCount) {
-      const iw = (asset as HTMLImageElement).naturalWidth;
-      const ih = (asset as HTMLImageElement).naturalHeight;
-      const frameWidth = iw / cfg.frameCount;
-      const frameHeight = ih;
-      const frameRate = this.state === CreatureState.PERCHED && !this.isHopping ? 6 : (cfg.frameRate || 24);
-      
-      // 优化卡顿：基于 variantSeed 的时间偏移
-      const timeOffset = this.variantSeed * 10000;
-      const currentFrame = Math.floor(((this.actionTimer + timeOffset) * frameRate) / 1000) % cfg.frameCount;
-      
-      const sx = currentFrame * frameWidth;
-      const aspect = frameWidth / frameHeight;
-      const drawHeight = this.size;
-      const drawWidth = drawHeight * aspect;
-      ctx.drawImage(asset, sx, 0, frameWidth, frameHeight, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
-    } else {
-      const iw = (asset instanceof HTMLImageElement) ? asset.naturalWidth : (asset as HTMLVideoElement).videoWidth;
-      const ih = (asset instanceof HTMLImageElement) ? asset.naturalHeight : (asset as HTMLVideoElement).videoHeight;
-      const aspect = iw / ih;
-      const drawHeight = this.size;
-      const drawWidth = drawHeight * aspect;
-      ctx.drawImage(asset, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+    try {
+      if (cfg.isSpriteSheet && cfg.frameCount && cfg.frameCount > 0) {
+        const frameWidth = iw / cfg.frameCount;
+        const frameHeight = ih;
+        if (frameWidth <= 0) throw new Error("Invalid frameWidth");
+
+        const frameRate = this.state === CreatureState.PERCHED && !this.isHopping ? 6 : (cfg.frameRate || 24);
+        const timeOffset = this.variantSeed * 10000;
+        const currentFrame = Math.floor(((this.actionTimer + timeOffset) * frameRate) / 1000) % cfg.frameCount;
+        
+        const sx = currentFrame * frameWidth;
+        const aspect = frameWidth / frameHeight;
+        const drawHeight = this.size * 2.2;
+        const drawWidth = drawHeight * aspect;
+        ctx.drawImage(asset, sx, 0, frameWidth, frameHeight, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+      } else {
+        const aspect = iw / ih;
+        const drawHeight = this.size * 2.2;
+        const drawWidth = drawHeight * aspect;
+        ctx.drawImage(asset, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+      }
+    } catch (e) {
+      ctx.fillStyle = 'rgba(45, 212, 191, 0.2)';
+      ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
   }
