@@ -138,7 +138,6 @@ const HandAR: React.FC = () => {
       limbStatesRef.current.forEach((state, label) => {
         if (state.missingFrames < 30) {
           if (label.includes('Head')) {
-            // Draw Head Centroid (Red Circle)
             ctx.fillStyle = 'rgba(255, 0, 0, 0.6)';
             ctx.beginPath();
             ctx.arc(state.centroid.x, state.centroid.y, 8, 0, Math.PI * 2);
@@ -146,7 +145,6 @@ const HandAR: React.FC = () => {
           } else if (label.includes('Shoulders')) {
             const { leftTip, rightTip, neck } = state.rawPoints;
             if (leftTip && rightTip && neck) {
-              // Draw Shoulder Line (Yellow)
               ctx.strokeStyle = 'rgba(255, 255, 0, 0.8)';
               ctx.lineWidth = 3;
               ctx.beginPath();
@@ -198,8 +196,6 @@ const HandAR: React.FC = () => {
         }
 
         c.update(dt, targetPoint, creaturesRef.current);
-        
-        // Draw creature debug (Green square if asset failed)
         c.draw(ctx);
         
         const isOffScreen = (
@@ -223,7 +219,6 @@ const HandAR: React.FC = () => {
       return;
     }
 
-    // ROBUST COORDINATE MAPPING (Better aspect ratio handling)
     const canvasW = canvas.width;
     const canvasH = canvas.height;
     const videoW = video.videoWidth || 1280;
@@ -235,7 +230,6 @@ const HandAR: React.FC = () => {
     const ox = (canvasW - dw) / 2;
     const oy = (canvasH - dh) / 2;
 
-    // Normalizing landmarks: 1.0 - x for mirroring
     const toPx = (l: any) => ({ 
       x: (1.0 - l.x) * dw + ox, 
       y: l.y * dh + oy 
@@ -264,9 +258,13 @@ const HandAR: React.FC = () => {
       const faceHeight = getDistance(forehead, chin);
       const faceWidth = getDistance(earL, earR);
       
-      const neck = { x: chin.x, y: chin.y + faceHeight * 0.15 };
+      // SHARPENED TENT GEOMETRY FOR SHOULDERS
+      // A. Neck Peak: Move it higher (0.05 instead of 0.15)
+      const neck = { x: chin.x, y: chin.y + faceHeight * 0.05 };
+
+      // B. Shoulder Tips: Keep width 1.8, but increase drop to 0.6 for a steeper slope
       const sWidth = faceWidth * 1.8; 
-      const sDrop = faceHeight * 0.35; 
+      const sDrop = faceHeight * 0.6; 
 
       const leftTip = { x: chin.x - sWidth, y: neck.y + sDrop };
       const rightTip = { x: chin.x + sWidth, y: neck.y + sDrop };
@@ -354,7 +352,6 @@ const HandAR: React.FC = () => {
     return () => { if (cameraRef.current) cameraRef.current.stop(); };
   }, [onResults, selectedDeviceId]);
 
-  // Asset Monitoring
   useEffect(() => {
     const checkAssets = () => {
       const activeAsset = mainAsset;
@@ -363,7 +360,7 @@ const HandAR: React.FC = () => {
         setAssetStatus("Initializing Pool...");
         return;
       }
-      const item = Array.from(pool.children).find((c: any) => c.src === activeAsset) as any;
+      const item = Array.from(pool.children).find((c: any) => c.getAttribute('data-src') === activeAsset) as any;
       if (!item) {
         setAssetStatus("Asset Pending...");
       } else {
@@ -380,7 +377,6 @@ const HandAR: React.FC = () => {
       <video ref={videoRef} className="hidden" playsInline muted autoPlay />
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover" />
       
-      {/* STATUS INDICATORS */}
       <div className="absolute top-6 left-6 z-30 pointer-events-none flex items-center gap-4">
         <div className={`w-3 h-3 rounded-full transition-all duration-300 ${anySmile ? 'bg-teal-400 shadow-[0_0_10px_#2dd4bf]' : 'bg-white/20'}`} />
         <span className="text-white/40 text-[10px] font-mono tracking-widest uppercase">Smile Sensor</span>

@@ -1,4 +1,5 @@
 import { CreatureEntity, CreatureState, Species, IdleAction, CustomBirdConfig } from '../types';
+import { FALLBACK_PHOENIX_BASE64 } from '../constants';
 
 const GlobalAssetManager: Record<string, HTMLImageElement | HTMLVideoElement> = {};
 
@@ -21,6 +22,7 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
     video.src = url;
     video.muted = true; video.loop = true; video.autoplay = true;
     video.setAttribute('playsinline', '');
+    video.setAttribute('data-src', url);
     container.appendChild(video);
     video.play().catch(() => {});
     GlobalAssetManager[url] = video;
@@ -29,6 +31,16 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
     const img = new Image();
     img.src = url;
     img.crossOrigin = "anonymous";
+    img.setAttribute('data-src', url);
+    
+    // Handle loading errors by falling back to base64
+    img.onerror = () => {
+      if (img.src !== FALLBACK_PHOENIX_BASE64) {
+        console.warn(`Bird asset load failed, using fallback for: ${url}`);
+        img.src = FALLBACK_PHOENIX_BASE64;
+      }
+    };
+
     container.appendChild(img);
     GlobalAssetManager[url] = img;
     return img;
@@ -213,9 +225,14 @@ export class Bird implements CreatureEntity {
     }
 
     if (!isReady) {
-      // DEBUG PLACEHOLDER
-      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
-      ctx.fillRect(-this.size, -this.size, this.size * 2, this.size * 2);
+      // Nice debug placeholder - colored rounded rect
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.beginPath();
+      ctx.roundRect(-this.size, -this.size, this.size * 2, this.size * 2, 8);
+      ctx.fill();
+      ctx.strokeStyle = '#2dd4bf';
+      ctx.lineWidth = 2;
+      ctx.stroke();
       ctx.restore();
       return;
     }

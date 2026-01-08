@@ -1,4 +1,5 @@
 import { CreatureEntity, CreatureState, Species, IdleAction, CustomBirdConfig } from '../types';
+import { FALLBACK_PHOENIX_BASE64 } from '../constants';
 
 const GlobalAssetManager: Record<string, HTMLImageElement | HTMLVideoElement> = {};
 
@@ -21,6 +22,7 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
     video.src = url;
     video.muted = true; video.loop = true; video.autoplay = true;
     video.setAttribute('playsinline', '');
+    video.setAttribute('data-src', url);
     container.appendChild(video);
     video.play().catch(() => {});
     GlobalAssetManager[url] = video;
@@ -29,6 +31,16 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
     const img = new Image();
     img.src = url;
     img.crossOrigin = "anonymous";
+    img.setAttribute('data-src', url);
+    
+    // Handle loading errors by falling back to base64
+    img.onerror = () => {
+      if (img.src !== FALLBACK_PHOENIX_BASE64) {
+        console.warn(`Butterfly asset load failed, using fallback for: ${url}`);
+        img.src = FALLBACK_PHOENIX_BASE64;
+      }
+    };
+
     container.appendChild(img);
     GlobalAssetManager[url] = img;
     return img;
@@ -200,11 +212,14 @@ export class Butterfly implements CreatureEntity {
     }
 
     if (!isReady) {
-      // DEBUG PLACEHOLDER
-      ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+      // Nice debug placeholder
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
       ctx.beginPath();
       ctx.arc(0, 0, this.size, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = '#2dd4bf';
+      ctx.lineWidth = 2;
+      ctx.stroke();
       ctx.restore();
       return;
     }
