@@ -22,12 +22,12 @@ const createInitialLimbState = (): LimbStateData => ({
   rawPoints: {}, missingFrames: 0, centroid: {x: 0, y: 0}, velocity: 0 
 });
 
-const VELOCITY_SMOOTHING = 0.92; 
-const MOVEMENT_DEADZONE = 5.0;  
+const VELOCITY_SMOOTHING = 0.8;
+const MOVEMENT_DEADZONE = 3.0;
 
 const THRESHOLDS: Record<string, number> = {
-  'Head': 15.0,
-  'Shoulders': 20.0
+  'Head': 8.0,
+  'Shoulders': 12.0
 };
 
 const loadScript = (src: string): Promise<void> => {
@@ -49,7 +49,8 @@ const loadScript = (src: string): Promise<void> => {
 const HandAR: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const birdPreviewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const butterflyPreviewCanvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showAssetPanel, setShowAssetPanel] = useState(false);
   const [customCreatures, setCustomCreatures] = useState<CustomBirdConfig[]>([]);
@@ -73,35 +74,42 @@ const HandAR: React.FC = () => {
   const cameraRef = useRef<any>(null);
   const lastSpawnTimesRef = useRef<Map<string, number>>(new Map());
 
-  const getCurrentEphemeralConfig = (id: string, name: string): CustomBirdConfig => ({
-    id, category: activeCategory, name: name || 'Spirit', mainAsset, 
-    globalScale: newGlobalScale, globalRotation: newGlobalRotation, 
-    flapAmplitude: 1.0, baseSize: 56, sizeRange: 0.1, 
-    isSpriteSheet: true, frameCount: 25, frameRate: 24
-  });
+  const getCurrentEphemeralConfig = (id: string, name: string, category: CreatureCategory, assetUrl: string): CustomBirdConfig => {
+    const frameCount = assetUrl.includes('butterfly.png') ? 45 : 25;
+    return {
+      id, 
+      category, 
+      name: name || (category === 'butterfly' ? 'Morpho' : 'Spirit'), 
+      mainAsset: assetUrl, 
+      globalScale: newGlobalScale, 
+      globalRotation: newGlobalRotation, 
+      flapAmplitude: category === 'butterfly' ? 2.0 : 1.0, 
+      baseSize: category === 'butterfly' ? 50 : 56, 
+      sizeRange: 0.1, 
+      isSpriteSheet: true, 
+      frameCount, 
+      frameRate: 24
+    };
+  };
 
   const spawnCreature = useCallback((targetId: string) => {
     const pool = customCreaturesRef.current;
     if (pool.length === 0 || !canvasRef.current) return;
-    
-    // 获取一个随机的基础配置
     const baseCfg = pool[Math.floor(Math.random() * pool.length)];
-    
-    // 强制使用当前选中的素材 URL，覆盖数据库中的旧值，确保在 AR 模式下一定能加载
+    const currentFrameCount = mainAsset.includes('butterfly.png') ? 45 : 25;
     const cfg: CustomBirdConfig = {
       ...baseCfg,
+      category: activeCategory, 
       mainAsset: mainAsset, 
       isSpriteSheet: true,  
-      frameCount: 25        
+      frameCount: currentFrameCount
     };
-
     const randomOffset = 0.1 + Math.random() * 0.8;
     const creature = cfg.category === 'butterfly' 
       ? new Butterfly(canvasRef.current.width, canvasRef.current.height, targetId, randomOffset, cfg) 
       : new Bird(canvasRef.current.width, canvasRef.current.height, 100, targetId, randomOffset, [cfg]);
-    
     creaturesRef.current.push(creature);
-  }, [mainAsset]); // mainAsset 变化时重新生成函数，确保持续使用最新 URL
+  }, [mainAsset, activeCategory]);
 
   useEffect(() => {
     const getDevices = async () => {
@@ -109,12 +117,8 @@ const HandAR: React.FC = () => {
         const devs = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devs.filter(d => d.kind === 'videoinput');
         setDevices(videoDevices);
-        if (videoDevices.length > 0 && !selectedDeviceId) {
-          setSelectedDeviceId(videoDevices[0].deviceId);
-        }
-      } catch (err) {
-        console.error("Error fetching devices", err);
-      }
+        if (videoDevices.length > 0 && !selectedDeviceId) setSelectedDeviceId(videoDevices[0].deviceId);
+      } catch (err) { console.error("Error fetching devices", err); }
     };
     getDevices();
   }, [selectedDeviceId]);
@@ -128,15 +132,10 @@ const HandAR: React.FC = () => {
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
       const video = videoRef.current;
-      if (!canvas || !ctx || !video || video.readyState < 2) { 
-        frameId = requestAnimationFrame(render); 
-        return; 
-      }
-      
+      if (!canvas || !ctx || !video || video.readyState < 2) { frameId = requestAnimationFrame(render); return; }
       if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
         canvas.width = window.innerWidth; canvas.height = window.innerHeight;
       }
-      
       ctx.save();
       const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
       const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
@@ -144,11 +143,9 @@ const HandAR: React.FC = () => {
       ctx.translate(canvas.width, 0); ctx.scale(-1, 1);
       ctx.drawImage(video, ox, oy, dw, dh);
       ctx.restore();
-
       creaturesRef.current = creaturesRef.current.filter(c => {
         let targetPoint = null;
         const state = limbStatesRef.current.get(c.targetId);
-        
         if (state && state.missingFrames < 30) {
           const t = c.perchOffset;
           if (c.targetId.includes('Head')) {
@@ -165,33 +162,21 @@ const HandAR: React.FC = () => {
             if (leftTip && rightTip && neck) {
               if (t <= 0.5) {
                 const localT = t * 2;
-                targetPoint = { 
-                  x: lerp(leftTip.x, neck.x, localT), 
-                  y: lerp(leftTip.y, neck.y, localT) 
-                };
+                targetPoint = { x: lerp(leftTip.x, neck.x, localT), y: lerp(leftTip.y, neck.y, localT) };
               } else {
                 const localT = (t - 0.5) * 2;
-                targetPoint = { 
-                  x: lerp(neck.x, rightTip.x, localT), 
-                  y: lerp(neck.y, rightTip.y, localT) 
-                };
+                targetPoint = { x: lerp(neck.x, rightTip.x, localT), y: lerp(neck.y, rightTip.y, localT) };
               }
             }
           }
         } else if (state && state.missingFrames > 60 && c.state !== CreatureState.FLYING_AWAY) {
           c.state = CreatureState.FLYING_AWAY;
         }
-
         c.update(dt, targetPoint, creaturesRef.current);
         c.draw(ctx);
-        
-        const isOffScreen = (
-          c.y < -500 || c.y > canvas.height + 500 || 
-          c.x < -500 || c.x > canvas.width + 500
-        );
+        const isOffScreen = (c.y < -500 || c.y > canvas.height + 500 || c.x < -500 || c.x > canvas.width + 500);
         return !(c.state === CreatureState.FLYING_AWAY && isOffScreen);
       });
-
       frameId = requestAnimationFrame(render);
     };
     frameId = requestAnimationFrame(render);
@@ -201,74 +186,45 @@ const HandAR: React.FC = () => {
   const onResults = useCallback((results: any) => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
-    if (!canvas || !video || !results.multiFaceLandmarks) {
-      setAnySmile(false);
-      return;
-    }
-
-    const canvasW = canvas.width;
-    const canvasH = canvas.height;
-    const videoW = video.videoWidth || 1280;
-    const videoH = video.videoHeight || 720;
-
+    if (!canvas || !video || !results.multiFaceLandmarks) { setAnySmile(false); return; }
+    const canvasW = canvas.width; const canvasH = canvas.height;
+    const videoW = video.videoWidth || 1280; const videoH = video.videoHeight || 720;
     const ratio = Math.max(canvasW / videoW, canvasH / videoH); 
-    const dw = videoW * ratio;
-    const dh = videoH * ratio;
-    const ox = (canvasW - dw) / 2;
-    const oy = (canvasH - dh) / 2;
-
-    const toPx = (l: any) => ({ 
-      x: (1.0 - l.x) * dw + ox, 
-      y: l.y * dh + oy 
-    });
-    
+    const dw = videoW * ratio; const dh = videoH * ratio;
+    const ox = (canvasW - dw) / 2; const oy = (canvasH - dh) / 2;
+    const toPx = (l: any) => ({ x: (1.0 - l.x) * dw + ox, y: l.y * dh + oy });
     const seenThisFrame = new Set<string>();
-    let frameAnySmile = false;
-
+    let frameAnySmile = false; let spawnCandidateId: string | null = null;
     results.multiFaceLandmarks.forEach((landmarks: any[], faceIndex: number) => {
       const mouthL = landmarks[61], mouthR = landmarks[291];
       const faceL = landmarks[234], faceR = landmarks[454];
       const widthRatio = getDistance(mouthL, mouthR) / getDistance(faceL, faceR);
       const isFaceSmiling = widthRatio > 0.38; 
       if (isFaceSmiling) frameAnySmile = true;
-
-      const headId = `Face_${faceIndex}_Head`;
-      seenThisFrame.add(headId);
+      const headId = `Face_${faceIndex}_Head`; seenThisFrame.add(headId);
       const earL = toPx(landmarks[234]), earR = toPx(landmarks[454]);
       const faceCenter = { x: (earL.x + earR.x)/2, y: (earL.y + earR.y)/2 };
       updateLimbState(headId, faceCenter, { earL, earR }, 'Head');
-
-      const shoulderId = `Face_${faceIndex}_Shoulders`;
-      seenThisFrame.add(shoulderId);
-      const chin = toPx(landmarks[152]);
-      const forehead = toPx(landmarks[10]);
-      const faceHeight = getDistance(forehead, chin);
-      const faceWidth = getDistance(earL, earR);
-      
+      const shoulderId = `Face_${faceIndex}_Shoulders`; seenThisFrame.add(shoulderId);
+      const chin = toPx(landmarks[152]); const forehead = toPx(landmarks[10]);
+      const faceHeight = getDistance(forehead, chin); const faceWidth = getDistance(earL, earR);
       const neck = { x: chin.x, y: chin.y + faceHeight * 0.05 };
-      const sWidth = faceWidth * 1.5; 
-      const sDrop = faceHeight * 0.6; 
-
+      const sWidth = faceWidth * 1.5; const sDrop = faceHeight * 0.6; 
       const leftTip = { x: chin.x - sWidth, y: neck.y + sDrop };
       const rightTip = { x: chin.x + sWidth, y: neck.y + sDrop };
-
       updateLimbState(shoulderId, neck, { leftTip, rightTip, neck }, 'Shoulders');
-
-      if (isFaceSmiling && creaturesRef.current.length < 40) {
-        const now = performance.now();
-        const lastHeadSpawn = lastSpawnTimesRef.current.get(headId) || 0;
-        if (now - lastHeadSpawn > 1000) {
-          const count = Math.floor(Math.random() * 2) + 1;
-          for(let i=0; i<count; i++) {
-            spawnCreature(Math.random() > 0.5 ? headId : shoulderId);
-          }
-          lastSpawnTimesRef.current.set(headId, now);
-        }
-      }
+      if (isFaceSmiling && !spawnCandidateId) spawnCandidateId = Math.random() > 0.5 ? headId : shoulderId;
     });
-
     setAnySmile(frameAnySmile);
-
+    if (frameAnySmile && spawnCandidateId && creaturesRef.current.length < 40) {
+      const now = performance.now();
+      const lastGlobalSpawn = lastSpawnTimesRef.current.get('GLOBAL_SPAWN_LOCK') || 0;
+      if (now - lastGlobalSpawn > 1000) {
+        const count = Math.floor(Math.random() * 3) + 1;
+        for (let i = 0; i < count; i++) spawnCreature(spawnCandidateId);
+        lastSpawnTimesRef.current.set('GLOBAL_SPAWN_LOCK', now);
+      }
+    }
     function updateLimbState(label: string, nCentroid: {x: number, y: number}, rawPoints: any, category: string) {
       if (!limbStatesRef.current.has(label)) limbStatesRef.current.set(label, createInitialLimbState());
       const s = limbStatesRef.current.get(label)!;
@@ -276,10 +232,8 @@ const HandAR: React.FC = () => {
       if (!isNew) {
         const diff = Math.max(0, getDistance(s.centroid, nCentroid) - MOVEMENT_DEADZONE);
         s.velocity = s.velocity * VELOCITY_SMOOTHING + diff * (1 - VELOCITY_SMOOTHING);
-        if (s.velocity > (THRESHOLDS[category] || 15.0)) {
-          creaturesRef.current.forEach(c => { 
-            if (c.targetId === label && c.state !== CreatureState.FLYING_AWAY) c.state = CreatureState.FLYING_AWAY; 
-          });
+        if (s.velocity > (THRESHOLDS[category] || 8.0)) {
+          creaturesRef.current.forEach(c => { if (c.targetId === label && c.state !== CreatureState.FLYING_AWAY) c.state = CreatureState.FLYING_AWAY; });
         }
       } else { s.velocity = 0; }
       s.centroid = nCentroid; s.rawPoints = rawPoints; s.missingFrames = 0;
@@ -294,21 +248,11 @@ const HandAR: React.FC = () => {
         const faceMeshScript = "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js";
         const cameraUtilsScript = "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
         await Promise.all([loadScript(faceMeshScript), loadScript(cameraUtilsScript)]);
-
         if (!faceMeshRef.current && window.FaceMesh) {
-          const faceMesh = new window.FaceMesh({ 
-            locateFile: (f: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` 
-          });
-          faceMesh.setOptions({ 
-            maxNumFaces: 4, 
-            refineLandmarks: true, 
-            minDetectionConfidence: 0.5, 
-            minTrackingConfidence: 0.5 
-          });
-          faceMesh.onResults(onResults);
-          faceMeshRef.current = faceMesh;
+          const faceMesh = new window.FaceMesh({ locateFile: (f: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
+          faceMesh.setOptions({ maxNumFaces: 4, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+          faceMesh.onResults(onResults); faceMeshRef.current = faceMesh;
         }
-
         if (cameraRef.current) await cameraRef.current.stop();
         if (videoRef.current && window.Camera) {
           cameraRef.current = new window.Camera(videoRef.current, {
@@ -317,72 +261,65 @@ const HandAR: React.FC = () => {
           });
           await cameraRef.current.start();
         }
-
         const existing = await getAllBirdsFromDB();
-        if (existing.length === 0) { 
-          for (const p of PRESET_BIRDS) await saveBirdToDB(p); 
-          customCreaturesRef.current = await getAllBirdsFromDB(); 
-        } else { customCreaturesRef.current = existing; }
-        
-        setCustomCreatures(customCreaturesRef.current); 
-        setIsLoading(false);
-      } catch (e) { 
-        console.error("Initialization error:", e);
-        setIsLoading(false);
-      }
+        if (existing.length === 0) { for (const p of PRESET_BIRDS) await saveBirdToDB(p); customCreaturesRef.current = await getAllBirdsFromDB(); }
+        else { customCreaturesRef.current = existing; }
+        setCustomCreatures(customCreaturesRef.current); setIsLoading(false);
+      } catch (e) { console.error("Initialization error:", e); setIsLoading(false); }
     };
     init();
     return () => { if (cameraRef.current) cameraRef.current.stop(); };
   }, [onResults, selectedDeviceId]);
 
+  // Dual Parallel Preview Logic
   useEffect(() => {
-    const canvas = previewCanvasRef.current;
-    if (!canvas || !showAssetPanel) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const birdCanvas = birdPreviewCanvasRef.current;
+    const buttCanvas = butterflyPreviewCanvasRef.current;
+    if (!birdCanvas || !buttCanvas || !showAssetPanel) return;
     
-    const cfg = getCurrentEphemeralConfig(editingId || 'preview', newName);
-    const preview = cfg.category === 'butterfly' 
-      ? new Butterfly(canvas.width, canvas.height, 'none', 0.5, cfg) 
-      : new Bird(canvas.width, canvas.height, 100, 'none', 0.5, [cfg]);
+    const bCtx = birdCanvas.getContext('2d');
+    const fCtx = buttCanvas.getContext('2d');
+    if (!bCtx || !fCtx) return;
+
+    // Use current settings to create previews for both types
+    const birdCfg = getCurrentEphemeralConfig('bird-preview', 'Phoenix', 'bird', ASSET_LIBRARY[0].url);
+    const buttCfg = getCurrentEphemeralConfig('butt-preview', 'Morpho', 'butterfly', ASSET_LIBRARY[1].url);
+
+    const birdPrev = new Bird(birdCanvas.width, birdCanvas.height, 100, 'none', 0.5, [birdCfg]);
+    const buttPrev = new Butterfly(buttCanvas.width, buttCanvas.height, 'none', 0.5, buttCfg);
     
     let lastTime = performance.now();
     let reqId: number;
     
-    const renderPreview = (time: number) => {
-      const dt = time - lastTime;
-      lastTime = time;
+    const renderPreviews = (time: number) => {
+      const dt = time - lastTime; lastTime = time;
       
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const cx = canvas.width / 2;
-      const cy = canvas.height / 2;
+      bCtx.clearRect(0, 0, birdCanvas.width, birdCanvas.height);
+      fCtx.clearRect(0, 0, buttCanvas.width, buttCanvas.height);
       
-      preview.state = CreatureState.PERCHED;
-      preview.update(dt, { x: cx, y: cy }, []);
+      const bcx = birdCanvas.width / 2; const bcy = birdCanvas.height / 2;
+      const fcx = buttCanvas.width / 2; const fcy = buttCanvas.height / 2;
       
-      // Force position and draw
-      preview.x = cx;
-      preview.y = cy;
-      preview.draw(ctx);
+      birdPrev.state = CreatureState.PERCHED; birdPrev.update(dt, { x: bcx, y: bcy }, []);
+      birdPrev.x = bcx; birdPrev.y = bcy; birdPrev.draw(bCtx);
+
+      buttPrev.state = CreatureState.PERCHED; buttPrev.update(dt, { x: fcx, y: fcy }, []);
+      buttPrev.x = fcx; buttPrev.y = fcy; buttPrev.draw(fCtx);
       
-      reqId = requestAnimationFrame(renderPreview);
+      reqId = requestAnimationFrame(renderPreviews);
     };
-    reqId = requestAnimationFrame(renderPreview);
+    reqId = requestAnimationFrame(renderPreviews);
     return () => cancelAnimationFrame(reqId);
-  }, [newGlobalScale, newGlobalRotation, mainAsset, showAssetPanel, activeCategory, newName, editingId]);
+  }, [newGlobalScale, newGlobalRotation, showAssetPanel, activeCategory, newName, editingId]);
 
   useEffect(() => {
     const checkAssets = () => {
       const activeAsset = mainAsset;
       const pool = document.getElementById('ar-asset-pool');
-      if (!pool) {
-        setAssetStatus("Initializing Pool...");
-        return;
-      }
+      if (!pool) return;
       const item = Array.from(pool.children).find((c: any) => c.getAttribute('data-src') === activeAsset) as any;
-      if (!item) {
-        setAssetStatus("Asset Pending...");
-      } else {
+      if (!item) setAssetStatus("Asset Pending...");
+      else {
         const ready = (item instanceof HTMLImageElement) ? item.naturalWidth > 0 : (item as HTMLVideoElement).readyState >= 2;
         setAssetStatus(ready ? "Asset Ready" : "Loading Asset...");
       }
@@ -420,7 +357,7 @@ const HandAR: React.FC = () => {
 
       {showAssetPanel && (
         <div className="absolute inset-0 z-40 bg-black/95 backdrop-blur-3xl flex items-center justify-center p-8 animate-in fade-in duration-300" onClick={() => setShowAssetPanel(false)}>
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-[1000px] rounded-[2.5rem] flex flex-col h-[85vh] overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-zinc-900 border border-white/10 w-full max-w-[1200px] rounded-[2.5rem] flex flex-col h-[85vh] overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="p-8 border-b border-white/5 flex justify-between items-center shrink-0">
               <h2 className="text-white font-black uppercase tracking-widest flex items-center gap-4"><Sparkles className="text-teal-400" /> SPECIES DNA</h2>
               <button onClick={() => setShowAssetPanel(false)} className="bg-zinc-800 p-2 rounded-full text-zinc-400 hover:text-white transition-colors"><X /></button>
@@ -428,45 +365,45 @@ const HandAR: React.FC = () => {
             <div className="flex-1 flex overflow-hidden">
               <div className="flex-1 overflow-y-auto p-10 space-y-10 bg-black/20 custom-scrollbar">
                 <div className="space-y-4">
-                  <label className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
-                    <CameraIcon className="w-3 h-3 text-teal-400" /> VIDEO SOURCE
-                  </label>
-                  <select 
-                    value={selectedDeviceId}
-                    onChange={(e) => setSelectedDeviceId(e.target.value)}
-                    className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-zinc-300 text-sm focus:border-teal-400 outline-none transition-all appearance-none cursor-pointer"
-                  >
-                    {devices.map((d) => (
-                      <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${d.deviceId.slice(0, 5)}`}</option>
-                    ))}
+                  <label className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2"><CameraIcon className="w-3 h-3 text-teal-400" /> VIDEO SOURCE</label>
+                  <select value={selectedDeviceId} onChange={(e) => setSelectedDeviceId(e.target.value)} className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-zinc-300 text-sm focus:border-teal-400 outline-none transition-all appearance-none cursor-pointer">
+                    {devices.map((d) => (<option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${d.deviceId.slice(0, 5)}`}</option>))}
                   </select>
                 </div>
                 <div className="flex gap-4">
-                  <button onClick={() => setActiveCategory('bird')} className={`px-8 py-4 rounded-2xl border uppercase text-[11px] font-black transition-all ${activeCategory === 'bird' ? 'bg-teal-400 border-teal-400 text-black' : 'border-white/10 text-zinc-500 hover:text-white'}`}>Bird</button>
-                  <button onClick={() => setActiveCategory('butterfly')} className={`px-8 py-4 rounded-2xl border uppercase text-[11px] font-black transition-all ${activeCategory === 'butterfly' ? 'bg-teal-400 border-teal-400 text-black' : 'border-white/10 text-zinc-500 hover:text-white'}`}>Butterfly</button>
+                  <button onClick={() => { setActiveCategory('bird'); setMainAsset(ASSET_LIBRARY[0].url); }} className={`px-8 py-4 rounded-2xl border uppercase text-[11px] font-black transition-all ${activeCategory === 'bird' ? 'bg-teal-400 border-teal-400 text-black' : 'border-white/10 text-zinc-500 hover:text-white'}`}>Bird</button>
+                  <button onClick={() => { setActiveCategory('butterfly'); setMainAsset(ASSET_LIBRARY[1].url); }} className={`px-8 py-4 rounded-2xl border uppercase text-[11px] font-black transition-all ${activeCategory === 'butterfly' ? 'bg-teal-400 border-teal-400 text-black' : 'border-white/10 text-zinc-500 hover:text-white'}`}>Butterfly</button>
                 </div>
                 <div className="grid grid-cols-2 gap-8">
-                  <div className="space-y-4">
-                    <label className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em]">SCALE</label>
-                    <input type="range" min="0.5" max="5" step="0.1" value={newGlobalScale} onInput={(e) => setNewGlobalScale(parseFloat((e.target as HTMLInputElement).value))} className="w-full accent-teal-400" />
-                  </div>
-                  <div className="space-y-4">
-                    <label className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em]">ROTATION</label>
-                    <input type="range" min="-180" max="180" value={newGlobalRotation} onInput={(e) => setNewGlobalRotation(parseFloat((e.target as HTMLInputElement).value))} className="w-full accent-teal-400" />
-                  </div>
+                  <div className="space-y-4"><label className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em]">SCALE</label><input type="range" min="0.5" max="5" step="0.1" value={newGlobalScale} onInput={(e) => setNewGlobalScale(parseFloat((e.target as HTMLInputElement).value))} className="w-full accent-teal-400" /></div>
+                  <div className="space-y-4"><label className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em]">ROTATION</label><input type="range" min="-180" max="180" value={newGlobalRotation} onInput={(e) => setNewGlobalRotation(parseFloat((e.target as HTMLInputElement).value))} className="w-full accent-teal-400" /></div>
                 </div>
                 <div className="flex gap-4">
                   <input type="text" value={newName} onChange={e => setNewName(e.target.value)} placeholder="DNA Name..." className="flex-1 bg-black/60 border border-white/10 rounded-2xl px-6 py-5 text-white uppercase font-black tracking-widest outline-none focus:border-teal-400 transition-colors" />
                   <button onClick={async () => {
-                    const cfg = getCurrentEphemeralConfig(editingId || Math.random().toString(36).substr(2,9), newName);
+                    const cfg = getCurrentEphemeralConfig(editingId || Math.random().toString(36).substr(2,9), newName, activeCategory, mainAsset);
                     await saveBirdToDB(cfg); const l = await getAllBirdsFromDB(); setCustomCreatures(l); customCreaturesRef.current = l; setEditingId(null); setNewName("");
                   }} className="px-12 bg-teal-400 hover:bg-teal-300 text-black font-black uppercase text-[12px] rounded-2xl shadow-xl transition-all"><Zap className="inline mr-2 w-5 h-5" /> UPDATE</button>
                 </div>
               </div>
-              <div className="w-[380px] border-l border-white/10 p-10 flex flex-col bg-zinc-950">
-                <div className="aspect-square bg-black rounded-[2rem] border border-white/5 mb-10 flex items-center justify-center overflow-hidden relative shadow-inner group">
-                  <canvas ref={previewCanvasRef} width={300} height={300} className="w-full h-full pointer-events-none group-hover:scale-110 transition-transform duration-700" />
+              
+              {/* Dual Parallel Preview Panel */}
+              <div className="w-[500px] border-l border-white/10 p-10 flex flex-col bg-zinc-950">
+                <div className="grid grid-cols-2 gap-6 mb-10">
+                  <div className="space-y-3">
+                    <span className="text-zinc-600 text-[9px] font-black uppercase tracking-widest">Phoenix DNA</span>
+                    <div className="aspect-square bg-black rounded-2xl border border-white/5 flex items-center justify-center overflow-hidden relative shadow-inner group">
+                      <canvas ref={birdPreviewCanvasRef} width={200} height={200} className="w-full h-full pointer-events-none group-hover:scale-110 transition-transform duration-700" />
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <span className="text-zinc-600 text-[9px] font-black uppercase tracking-widest">Morpho DNA</span>
+                    <div className="aspect-square bg-black rounded-2xl border border-white/5 flex items-center justify-center overflow-hidden relative shadow-inner group">
+                      <canvas ref={butterflyPreviewCanvasRef} width={200} height={200} className="w-full h-full pointer-events-none group-hover:scale-110 transition-transform duration-700" />
+                    </div>
+                  </div>
                 </div>
+
                 <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar">
                   {customCreatures.map(c => (
                     <div key={c.id} className={`p-5 rounded-2xl flex items-center justify-between border transition-all ${editingId === c.id ? 'bg-teal-400/10 border-teal-400/40' : 'bg-white/5 border-transparent hover:bg-white/10'}`}>

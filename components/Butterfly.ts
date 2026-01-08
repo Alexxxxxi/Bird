@@ -179,7 +179,8 @@ export class Butterfly implements CreatureEntity {
         const centerY = this.screenHeight / 2;
         let angle = Math.atan2(this.y - centerY, this.x - centerX);
         if (angle > 0) angle = -angle;
-        const escapeSpeed = 8 + Math.random() * 8; 
+        // 降低飞走的速度 30%: 原本 8~16 -> 调整为 5.6~11.2
+        const escapeSpeed = 5.6 + Math.random() * 5.6; 
         this.velocityX = Math.cos(angle) * escapeSpeed;
         this.velocityY = Math.sin(angle) * escapeSpeed;
         if (this.velocityY > 0) this.velocityY *= -1;
