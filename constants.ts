@@ -26,7 +26,7 @@ export const PRESET_BIRDS: CustomBirdConfig[] = [
     globalX: 0,
     globalY: 0,
     flapAmplitude: 1.0,
-    baseSize: 100, 
+    baseSize: 70, 
     sizeRange: 0.1,
     isSpriteSheet: true, 
     frameCount: 25,      

@@ -76,7 +76,7 @@ const HandAR: React.FC = () => {
   const getCurrentEphemeralConfig = (id: string, name: string): CustomBirdConfig => ({
     id, category: activeCategory, name: name || 'Spirit', mainAsset, 
     globalScale: newGlobalScale, globalRotation: newGlobalRotation, 
-    flapAmplitude: 1.0, baseSize: 80, sizeRange: 0.1, 
+    flapAmplitude: 1.0, baseSize: 56, sizeRange: 0.1, 
     isSpriteSheet: true, frameCount: 25, frameRate: 24
   });
 

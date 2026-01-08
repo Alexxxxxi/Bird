@@ -116,7 +116,8 @@ export class Butterfly implements CreatureEntity {
     this.species = config.name;
     const sizeVar = (config.sizeRange || 0.6);
     const randomScale = 0.6 + (this.variantSeed * sizeVar * 1.8); 
-    this.size = config.baseSize * (config.globalScale || 1.0) * randomScale * 0.8;
+    // 将系数从 0.8 调整为 0.56 (即原始尺寸的 70%)
+    this.size = config.baseSize * (config.globalScale || 1.0) * randomScale * 0.56;
     forceAnimateInDOM(config.mainAsset);
   }
 
@@ -212,7 +213,6 @@ export class Butterfly implements CreatureEntity {
     }
 
     if (!isReady) {
-      // Nice debug placeholder
       ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
       ctx.beginPath();
       ctx.arc(0, 0, this.size, 0, Math.PI * 2);
@@ -231,7 +231,11 @@ export class Butterfly implements CreatureEntity {
       const frameWidth = iw / cfg.frameCount;
       const frameHeight = ih;
       const frameRate = this.state === CreatureState.PERCHED && !this.isHopping ? 6 : (cfg.frameRate || 24);
-      const currentFrame = Math.floor((this.actionTimer * frameRate) / 1000) % cfg.frameCount;
+      
+      // 优化卡顿：基于 variantSeed 的时间偏移
+      const timeOffset = this.variantSeed * 10000;
+      const currentFrame = Math.floor(((this.actionTimer + timeOffset) * frameRate) / 1000) % cfg.frameCount;
+      
       const sx = currentFrame * frameWidth;
       const aspect = frameWidth / frameHeight;
       const drawHeight = this.size;

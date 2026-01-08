@@ -1,10 +1,15 @@
 import { CreatureEntity, CreatureState, Species, IdleAction, CustomBirdConfig } from '../types';
 import { FALLBACK_PHOENIX_BASE64 } from '../constants';
 
+// 全局资源单例管理器，确保同一 URL 只创建一个实例
 const GlobalAssetManager: Record<string, HTMLImageElement | HTMLVideoElement> = {};
 
+/**
+ * 确保资源被加载并驻留在 DOM 中（解决部分浏览器垃圾回收导致 Canvas 丢失纹理的问题）
+ */
 const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => {
   if (GlobalAssetManager[url]) return GlobalAssetManager[url];
+
   const isVideo = /\.(mp4|webm|mov)$/i.test(url);
   let container = document.getElementById('ar-asset-pool');
   if (!container) {
@@ -20,23 +25,25 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
   if (isVideo) {
     const video = document.createElement('video');
     video.src = url;
-    video.muted = true; video.loop = true; video.autoplay = true;
+    video.muted = true;
+    video.loop = true;
+    video.autoplay = true;
     video.setAttribute('playsinline', '');
     video.setAttribute('data-src', url);
+    video.crossOrigin = "anonymous";
     container.appendChild(video);
     video.play().catch(() => {});
     GlobalAssetManager[url] = video;
     return video;
   } else {
     const img = new Image();
-    img.src = url;
     img.crossOrigin = "anonymous";
+    img.src = url;
     img.setAttribute('data-src', url);
     
-    // Handle loading errors by falling back to base64
     img.onerror = () => {
       if (img.src !== FALLBACK_PHOENIX_BASE64) {
-        console.warn(`Bird asset load failed, using fallback for: ${url}`);
+        console.warn(`Bird asset load failed, falling back to embedded sprite: ${url}`);
         img.src = FALLBACK_PHOENIX_BASE64;
       }
     };
@@ -72,10 +79,10 @@ export class Bird implements CreatureEntity {
   opacity: number = 1.0;
 
   private hopY: number = 0;
-  private landedTime: number = 0;
-  private nextHopTime: number = 0;
   private isHopping: boolean = false;
   private hopProgress: number = 0;
+  private nextHopTime: number = 0;
+  private landedTime: number = 0;
   private screenWidth: number;
   private screenHeight: number;
 
@@ -119,7 +126,8 @@ export class Bird implements CreatureEntity {
     forceAnimateInDOM(cfg.mainAsset);
     const sizeVar = (cfg.sizeRange || 0.6);
     const randomScale = 0.7 + (this.variantSeed * sizeVar * 1.5); 
-    const speciesBaseSize = cfg.baseSize * (cfg.globalScale || 1.0) * randomScale * 0.8; 
+    // 基础尺寸 * 用户缩放 * 变体随机缩放 * 0.56(代表30%缩小修正)
+    const speciesBaseSize = cfg.baseSize * (cfg.globalScale || 1.0) * randomScale * 0.56; 
     let targetScale = 1.0;
     if (this.targetId === 'Head') targetScale = 0.75;
     else if (this.targetId === 'Shoulders') targetScale = 0.9;
@@ -135,7 +143,7 @@ export class Bird implements CreatureEntity {
       this.hopY = 0;
       this.isHopping = false;
       let tx, ty;
-      if (perchTarget && this.targetId !== "Searching") {
+      if (perchTarget && this.targetId !== "Searching" && this.targetId !== "none") {
         const swayX = Math.sin(this.actionTimer * 0.002 + this.variantSeed * 10) * 15;
         const swayY = Math.cos(this.actionTimer * 0.0015) * 8;
         tx = perchTarget.x + swayX;
@@ -155,7 +163,7 @@ export class Bird implements CreatureEntity {
       this.x += this.velocityX;
       this.y += this.velocityY;
 
-      if (perchTarget && dist < 12 && this.targetId !== "Searching") {
+      if (perchTarget && dist < 12 && this.targetId !== "Searching" && this.targetId !== "none") {
         this.state = CreatureState.PERCHED;
         this.landedTime = this.actionTimer;
         this.nextHopTime = this.actionTimer + 1500 + Math.random() * 3000;
@@ -211,8 +219,23 @@ export class Bird implements CreatureEntity {
 
   draw(ctx: CanvasRenderingContext2D) {
     if (!this.customConfig || this.opacity <= 0) return;
+    
+    // 获取资源引用
     const asset = GlobalAssetManager[this.customConfig.mainAsset] || forceAnimateInDOM(this.customConfig.mainAsset);
-    const isReady = (asset instanceof HTMLImageElement) ? asset.naturalWidth > 0 : (asset as HTMLVideoElement).readyState >= 2;
+    
+    // 严格的就绪判定
+    let isReady = false;
+    let iw = 0, ih = 0;
+
+    if (asset instanceof HTMLImageElement) {
+      isReady = asset.complete && asset.naturalWidth > 0;
+      iw = asset.naturalWidth;
+      ih = asset.naturalHeight;
+    } else if (asset instanceof HTMLVideoElement) {
+      isReady = asset.readyState >= 2 && asset.videoWidth > 0;
+      iw = asset.videoWidth;
+      ih = asset.videoHeight;
+    }
 
     ctx.save();
     ctx.globalAlpha = this.opacity;
@@ -224,13 +247,14 @@ export class Bird implements CreatureEntity {
       ctx.scale(1.0 - stretch, 1.0 + stretch);
     }
 
+    // 未就绪时的防御性渲染（画一个漂亮的占位框）
     if (!isReady) {
-      // Nice debug placeholder - colored rounded rect
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.fillStyle = 'rgba(45, 212, 191, 0.1)';
       ctx.beginPath();
-      ctx.roundRect(-this.size, -this.size, this.size * 2, this.size * 2, 8);
+      ctx.roundRect(-this.size, -this.size, this.size * 2, this.size * 2, 12);
       ctx.fill();
-      ctx.strokeStyle = '#2dd4bf';
+      ctx.strokeStyle = 'rgba(45, 212, 191, 0.4)';
+      ctx.setLineDash([4, 4]);
       ctx.lineWidth = 2;
       ctx.stroke();
       ctx.restore();
@@ -238,28 +262,47 @@ export class Bird implements CreatureEntity {
     }
 
     const cfg = this.customConfig;
-    if (cfg.isSpriteSheet && cfg.frameCount) {
-      const iw = (asset as HTMLImageElement).naturalWidth;
-      const ih = (asset as HTMLImageElement).naturalHeight;
-      const frameWidth = iw / cfg.frameCount;
-      const frameHeight = ih;
-      const frameRate = this.state === CreatureState.PERCHED && !this.isHopping ? 4 : (cfg.frameRate || 24);
-      const currentFrame = Math.floor((this.actionTimer * frameRate) / 1000) % cfg.frameCount;
-      const sx = currentFrame * frameWidth;
-      const aspect = frameWidth / frameHeight;
-      const drawHeight = this.size * 2.2; 
-      const drawWidth = drawHeight * aspect;
-      ctx.translate((cfg.globalX || 0), (cfg.globalY || 0));
-      ctx.rotate((cfg.globalRotation || 0) * Math.PI / 180);
-      ctx.drawImage(asset, sx, 0, frameWidth, frameHeight, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
-    } else {
-      const iw = (asset instanceof HTMLImageElement) ? asset.naturalWidth : (asset as HTMLVideoElement).videoWidth;
-      const ih = (asset instanceof HTMLImageElement) ? asset.naturalHeight : (asset as HTMLVideoElement).videoHeight;
-      const aspect = iw / ih;
-      const drawHeight = this.size * 2.2; 
-      const drawWidth = drawHeight * aspect;
-      ctx.drawImage(asset, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+    
+    try {
+      if (cfg.isSpriteSheet && cfg.frameCount && cfg.frameCount > 0) {
+        // 防御性切片计算：确保 iw 存在且有效
+        const frameWidth = iw / cfg.frameCount;
+        const frameHeight = ih;
+        
+        if (frameWidth <= 0) throw new Error("Invalid frameWidth");
+
+        const frameRate = (this.state === CreatureState.PERCHED && !this.isHopping) ? 4 : (cfg.frameRate || 24);
+        
+        // 随机偏移时间解决第一帧同步卡顿
+        const timeOffset = this.variantSeed * 10000; 
+        const currentFrame = Math.floor(((this.actionTimer + timeOffset) * frameRate) / 1000) % cfg.frameCount;
+        
+        const sx = currentFrame * frameWidth;
+        const aspect = frameWidth / frameHeight;
+        const drawHeight = this.size * 2.2; 
+        const drawWidth = drawHeight * aspect;
+
+        ctx.translate((cfg.globalX || 0), (cfg.globalY || 0));
+        ctx.rotate((cfg.globalRotation || 0) * Math.PI / 180);
+        
+        // 核心绘图：try-catch 保证不中断
+        ctx.drawImage(
+          asset, 
+          sx, 0, frameWidth, frameHeight, 
+          -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight
+        );
+      } else {
+        const aspect = iw / ih;
+        const drawHeight = this.size * 2.2; 
+        const drawWidth = drawHeight * aspect;
+        ctx.drawImage(asset, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+      }
+    } catch (e) {
+      // 如果绘图失败，回退到占位符而不是让程序崩溃
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+      ctx.fillRect(-this.size, -this.size, this.size * 2, this.size * 2);
     }
+
     ctx.restore();
   }
 }
