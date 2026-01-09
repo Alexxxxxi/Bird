@@ -33,6 +33,11 @@ const AFTER_SMILE_TEXTS = [
   "用手比出一个\"C\"，把希望也带进来吧..."
 ];
 
+const preloadImage = (url: string) => {
+  const img = new Image();
+  img.src = url;
+};
+
 type LimbStateData = { 
   rawPoints: Record<string, any>;
   missingFrames: number;
@@ -306,6 +311,17 @@ const HandAR: React.FC = () => {
       try {
         if (ignore) return;
         setIsLoading(true);
+
+        // --- 强制预加载所有关键素材 ---
+        const ASSETS_TO_PRELOAD = [
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/_1-ezgif.com-gif-to-sprite-converter.png", // 鸟飞行
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand.png", // 鸟站立
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/butterfly.png",  // 蝴蝶
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png", // 背景
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/LOGO.png" // LOGO
+        ];
+        ASSETS_TO_PRELOAD.forEach(url => preloadImage(url));
+
         const cameraScriptPromise = loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js");
         const faceScriptPromise = loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js");
         const handScriptPromise = loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js");
