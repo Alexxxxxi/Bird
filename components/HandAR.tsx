@@ -54,7 +54,6 @@ const MOVEMENT_DEADZONE = 3.0;
 const REFERENCE_FACE_WIDTH = 240; 
 const MAX_CREATURES = 100;
 
-// 容量常量 (每区域)
 const BIRD_LIMIT_PER_AREA = 3;
 const BUTTERFLY_LIMIT_PER_AREA = 4;
 
@@ -83,7 +82,6 @@ const loadScript = (src: string): Promise<void> => {
 const HandAR: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  
   const logoImgRef = useRef<HTMLImageElement | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -96,7 +94,6 @@ const HandAR: React.FC = () => {
   const [hintText, setHintText] = useState("");
   const [hintVisible, setHintVisible] = useState(true);
   const hasSmiledRef = useRef(false);
-  const wasSmilingRef = useRef(false);
   const isFaceVisibleRef = useRef(false);
 
   const creaturesRef = useRef<any[]>([]);
@@ -138,14 +135,12 @@ const HandAR: React.FC = () => {
         canvas.width = window.innerWidth; canvas.height = window.innerHeight;
       }
 
-      // 1. 绘制相机底图
       ctx.save();
       const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
       const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
       const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
       ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.drawImage(video, ox, oy, dw, dh); ctx.restore();
 
-      // 2. 绘制生物
       creaturesRef.current = creaturesRef.current.filter(c => {
         let targetPoint = null;
         let depthScale = Math.min(Math.max(globalFaceWidthRef.current / REFERENCE_FACE_WIDTH, 0.3), 3.0);
@@ -181,11 +176,8 @@ const HandAR: React.FC = () => {
         return !(c.state === CreatureState.FLYING_AWAY && (c.y < -500 || c.y > canvas.height + 500));
       });
 
-      // 3. 绘制自适应 Logo (上部)
       const logoImg = logoImgRef.current;
       if (logoImg && logoImg.complete && logoImg.naturalWidth > 0) {
-        // 动态计算 Logo 比例：窄屏大，宽屏小
-        // 在 375px 时比例约为 0.25，在 1600px 时比例约为 0.10
         const logoRatio = lerp(0.25, 0.10, Math.min(Math.max((canvas.width - 375) / 1225, 0), 1));
         const logoTargetWidth = canvas.width * logoRatio;
         const logoScale = logoTargetWidth / logoImg.naturalWidth;
@@ -209,7 +201,7 @@ const HandAR: React.FC = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-      setAnySmile(false); wasSmilingRef.current = false; isFaceVisibleRef.current = false; return;
+      setAnySmile(false); isFaceVisibleRef.current = false; return;
     }
     isFaceVisibleRef.current = true;
     const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
@@ -269,7 +261,6 @@ const HandAR: React.FC = () => {
         }
       }
     }
-    wasSmilingRef.current = isSmiling;
   };
 
   onHandResultsRef.current = (results: any) => {
@@ -312,13 +303,12 @@ const HandAR: React.FC = () => {
         if (ignore) return;
         setIsLoading(true);
 
-        // --- 强制预加载所有关键素材 ---
         const ASSETS_TO_PRELOAD = [
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/_1-ezgif.com-gif-to-sprite-converter.png", // 鸟飞行
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand.png", // 鸟站立
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/butterfly.png",  // 蝴蝶
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png", // 背景
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/LOGO.png" // LOGO
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/_1-ezgif.com-gif-to-sprite-converter.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/butterfly.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/LOGO.png"
         ];
         ASSETS_TO_PRELOAD.forEach(url => preloadImage(url));
 
@@ -369,7 +359,6 @@ const HandAR: React.FC = () => {
     const updateText = () => {
       setHintVisible(false);
       setTimeout(() => {
-        // Logic Priority: No Face > Currently Smiling > Has Smiled Before > Waiting for Smile
         let texts = !isFaceVisibleRef.current 
           ? NO_FACE_TEXTS 
           : (anySmile 
@@ -395,7 +384,6 @@ const HandAR: React.FC = () => {
       <video ref={videoRef} className="hidden" playsInline muted autoPlay />
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover z-0" />
       
-      {/* 底部背景图 - 增加了响应式高度和位置微调 */}
       <div 
         className="absolute bottom-0 left-0 w-full h-[28%] md:h-[32%] lg:h-[38%] z-10 pointer-events-none transition-all duration-500"
         style={{

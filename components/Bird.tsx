@@ -107,7 +107,6 @@ export class Bird implements CreatureEntity {
   updateConfig(cfg: CustomBirdConfig) {
     this.customConfig = cfg;
     this.species = cfg.name;
-    // 预加载两个状态的资源
     forceAnimateInDOM(cfg.mainAsset);
     if (cfg.standingAsset) {
       forceAnimateInDOM(cfg.standingAsset);
@@ -190,7 +189,6 @@ export class Bird implements CreatureEntity {
     if (!this.customConfig || this.opacity <= 0) return;
     const cfg = this.customConfig;
 
-    // 状态检测：如果处于 PERCHED 状态且配置了 standingAsset，则使用站立素材，否则使用飞行素材
     const isPerched = this.state === CreatureState.PERCHED;
     const isUsingStanding = !!(isPerched && cfg.standingAsset);
     const currentAssetUrl = isUsingStanding ? cfg.standingAsset! : cfg.mainAsset;
@@ -226,19 +224,15 @@ export class Bird implements CreatureEntity {
 
     try {
       if (cfg.isSpriteSheet) {
-        // 判断当前帧数配置
         const currentFrameCount = isUsingStanding ? (cfg.standingFrameCount || 39) : (cfg.frameCount || 1);
         const frameWidth = iw / currentFrameCount;
         const frameHeight = ih;
         
-        // ★★★ 核心修复：根据状态调整播放速率 ★★★
         let frameRate = cfg.frameRate || 24;
         if (isPerched && !this.isHopping) {
           if (isUsingStanding) {
-            // 用户反馈站立太快，减慢 30%
             frameRate *= 0.7;
           } else {
-            // 普通停靠（无独立素材）使用极低帧率
             frameRate = 4;
           }
         }
