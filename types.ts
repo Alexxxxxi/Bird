@@ -1,4 +1,3 @@
-
 export interface Point {
   x: number;
   y: number;
@@ -34,6 +33,7 @@ export interface CustomBirdConfig {
   name: string;
   category: CreatureCategory;
   mainAsset: string; 
+  standingAsset?: string; // 停靠时的资源
   globalScale: number;
   globalRotation: number;
   globalX?: number;
@@ -41,9 +41,10 @@ export interface CustomBirdConfig {
   flapAmplitude: number;
   baseSize: number;
   sizeRange: number;
-  // Sprite Sheet Configuration
+  // 雪碧图配置
   isSpriteSheet?: boolean;
   frameCount?: number;
+  standingFrameCount?: number; // 停靠资源的帧数
   frameRate?: number;
 }
 
@@ -60,6 +61,7 @@ export interface CreatureEntity {
   velocityY: number;
   color: string;
   size: number;
+  depthScale: number;
   state: CreatureState;
   perchOffset: number;
   species: Species;

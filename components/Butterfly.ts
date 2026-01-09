@@ -16,7 +16,6 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
     });
     document.body.appendChild(container);
   }
-
   if (isVideo) {
     const video = document.createElement('video');
     video.src = url;
@@ -32,14 +31,7 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
     img.src = url;
     img.crossOrigin = "anonymous";
     img.setAttribute('data-src', url);
-    
-    img.onerror = () => {
-      if (img.src !== FALLBACK_PHOENIX_BASE64) {
-        console.warn(`Butterfly asset load failed, using fallback for: ${url}`);
-        img.src = FALLBACK_PHOENIX_BASE64;
-      }
-    };
-
+    img.onerror = () => { if (img.src !== FALLBACK_PHOENIX_BASE64) img.src = FALLBACK_PHOENIX_BASE64; };
     container.appendChild(img);
     GlobalAssetManager[url] = img;
     return img;
@@ -59,6 +51,7 @@ export class Butterfly implements CreatureEntity {
   velocityY: number;
   color: string;
   size: number = 10;
+  depthScale: number = 1.0;
   state: CreatureState;
   perchOffset: number;
   species: Species;
@@ -69,7 +62,6 @@ export class Butterfly implements CreatureEntity {
   opacity: number = 1.0;
   private floatOffset: number = Math.random() * 1000;
   private hopY: number = 0;
-  private landedTime: number = 0;
   private nextHopTime: number = 0;
   private isHopping: boolean = false;
   private hopProgress: number = 0;
@@ -91,14 +83,12 @@ export class Butterfly implements CreatureEntity {
     this.color = '#FFFFFF';
     this.screenWidth = screenWidth;
     this.screenHeight = screenHeight;
-    
     const side = Math.floor(Math.random() * 4);
     const buffer = 300;
     if (side === 0) { this.originX = Math.random() * screenWidth; this.originY = -buffer; }
     else if (side === 1) { this.originX = screenWidth + buffer; this.originY = Math.random() * screenHeight; }
     else if (side === 2) { this.originX = Math.random() * screenWidth; this.originY = screenHeight + buffer; }
     else { this.originX = -buffer; this.originY = Math.random() * screenHeight; }
-
     this.x = this.originX;
     this.y = this.originY;
     this.targetX = screenWidth / 2;
@@ -119,13 +109,13 @@ export class Butterfly implements CreatureEntity {
     forceAnimateInDOM(config.mainAsset);
   }
 
-  update(dt: number, perchTarget: { x: number, y: number } | null, siblings?: any[]) {
+  update(dt: number, perchTarget: { x: number, y: number } | null, siblings?: any[], depthScale: number = 1.0) {
+    this.depthScale = depthScale;
     this.actionTimer += dt;
     const smoothFactor = 1.0 - Math.pow(0.001, dt / 1000);
     
     if (this.state === CreatureState.FLYING_IN) {
       this.opacity = 1.0;
-      this.hopY = 0;
       let tx, ty;
       if (perchTarget && this.targetId !== "Searching" && this.targetId !== "none") {
         const swayX = Math.sin(this.actionTimer * 0.003 + this.floatOffset) * 20;
@@ -137,15 +127,12 @@ export class Butterfly implements CreatureEntity {
         tx = this.targetX + Math.sin(t + this.floatOffset) * 350;
         ty = 100 + Math.cos(t) * 40;
       }
-      
       this.velocityX = (tx - this.x) * 0.005;
       this.velocityY = (ty - this.y) * 0.005;
       this.x += this.velocityX;
       this.y += this.velocityY;
-
       if (perchTarget && Math.abs(tx - this.x) < 12 && this.targetId !== "Searching" && this.targetId !== "none") {
         this.state = CreatureState.PERCHED;
-        this.landedTime = this.actionTimer;
         this.nextHopTime = this.actionTimer + 2000 + Math.random() * 4000;
       }
     } 
@@ -154,113 +141,79 @@ export class Butterfly implements CreatureEntity {
       this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
       this.y = this.y + (perchTarget.y - this.y) * (smoothFactor * 16);
       this.velocityX = 0;
-      
-      if (!this.isHopping && this.actionTimer > this.nextHopTime) {
-        this.isHopping = true;
-        this.hopProgress = 0;
-      }
-
+      if (!this.isHopping && this.actionTimer > this.nextHopTime) { this.isHopping = true; this.hopProgress = 0; }
       if (this.isHopping) {
         this.hopProgress += dt * 0.006; 
-        this.hopY = -Math.abs(Math.sin(this.hopProgress)) * (this.size * 0.4);
-        if (this.hopProgress >= Math.PI) {
-          this.hopY = 0;
-          this.isHopping = false;
+        this.hopY = -Math.abs(Math.sin(this.hopProgress)) * (this.size * this.depthScale * 0.4);
+        if (this.hopProgress >= Math.PI) { 
+          this.hopY = 0; this.isHopping = false;
           this.nextHopTime = this.actionTimer + 2500 + Math.random() * 5000;
         }
-      } else {
-        this.hopY = 0;
-      }
+      } else { this.hopY = 0; }
     } 
     else if (this.state === CreatureState.FLYING_AWAY) {
-      const currentSpeed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
-      if (currentSpeed < 5) {
-        const centerX = this.screenWidth / 2;
-        const centerY = this.screenHeight / 2;
-        let angle = Math.atan2(this.y - centerY, this.x - centerX);
-        if (angle > 0) angle = -angle;
-        // 降低飞走的速度 30%: 原本 8~16 -> 调整为 5.6~11.2
-        const escapeSpeed = 5.6 + Math.random() * 5.6; 
-        this.velocityX = Math.cos(angle) * escapeSpeed;
-        this.velocityY = Math.sin(angle) * escapeSpeed;
-        if (this.velocityY > 0) this.velocityY *= -1;
-      }
+      const centerX = this.screenWidth / 2;
+      const centerY = this.screenHeight / 2;
+      let angle = Math.atan2(this.y - centerY, this.x - centerX);
+      if (angle > 0) angle = -angle;
+      const escapeSpeed = 5.6 + Math.random() * 5.6; 
+      this.velocityX = Math.cos(angle) * escapeSpeed;
+      this.velocityY = Math.sin(angle) * escapeSpeed;
+      if (this.velocityY > 0) this.velocityY *= -1;
       this.x += this.velocityX;
       this.y += this.velocityY;
-      this.hopY = 0;
-      this.isHopping = false;
-      this.opacity = 1.0; 
     }
-    if (Math.abs(this.velocityX) > 0.05) {
-      this.facing = this.velocityX > 0 ? -1 : 1;
-    }
+    if (Math.abs(this.velocityX) > 0.05) { this.facing = this.velocityX > 0 ? -1 : 1; }
   }
 
   draw(ctx: CanvasRenderingContext2D) {
     if (!this.customConfig || this.opacity <= 0) return;
     const asset = GlobalAssetManager[this.customConfig.mainAsset] || forceAnimateInDOM(this.customConfig.mainAsset);
-    
     let isReady = false;
     let iw = 0, ih = 0;
     if (asset instanceof HTMLImageElement) {
       isReady = asset.complete && asset.naturalWidth > 0;
-      iw = asset.naturalWidth;
-      ih = asset.naturalHeight;
+      iw = asset.naturalWidth; ih = asset.naturalHeight;
     } else if (asset instanceof HTMLVideoElement) {
       isReady = asset.readyState >= 2 && asset.videoWidth > 0;
-      iw = asset.videoWidth;
-      ih = asset.videoHeight;
+      iw = asset.videoWidth; ih = asset.videoHeight;
     }
-
     ctx.save();
     ctx.globalAlpha = this.opacity;
     ctx.translate(this.x, this.y + this.hopY);
     ctx.scale(this.facing, 1);
-    
+
+    const currentSize = this.size * this.depthScale;
+
     if (this.state === CreatureState.PERCHED) {
-      const stretch = Math.abs(this.hopY / this.size) * 0.3;
+      const stretch = Math.abs(this.hopY / currentSize) * 0.3;
       ctx.scale(1.0 - stretch, 1.0 + stretch);
     }
-
     if (!isReady) {
       ctx.fillStyle = 'rgba(45, 212, 191, 0.1)';
-      ctx.beginPath();
-      ctx.arc(0, 0, this.size, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(45, 212, 191, 0.4)';
-      ctx.setLineDash([4, 4]);
-      ctx.stroke();
-      ctx.restore();
-      return;
+      ctx.beginPath(); ctx.arc(0, 0, currentSize, 0, Math.PI * 2); ctx.fill();
+      ctx.restore(); return;
     }
-
     const cfg = this.customConfig;
     try {
       if (cfg.isSpriteSheet && cfg.frameCount && cfg.frameCount > 0) {
         const frameWidth = iw / cfg.frameCount;
         const frameHeight = ih;
-        if (frameWidth <= 0) throw new Error("Invalid frameWidth");
-
         const frameRate = this.state === CreatureState.PERCHED && !this.isHopping ? 6 : (cfg.frameRate || 24);
         const timeOffset = this.variantSeed * 10000;
         const currentFrame = Math.floor(((this.actionTimer + timeOffset) * frameRate) / 1000) % cfg.frameCount;
-        
         const sx = currentFrame * frameWidth;
         const aspect = frameWidth / frameHeight;
-        const drawHeight = this.size * 2.2;
+        const drawHeight = currentSize * 2.2;
         const drawWidth = drawHeight * aspect;
         ctx.drawImage(asset, sx, 0, frameWidth, frameHeight, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
       } else {
         const aspect = iw / ih;
-        const drawHeight = this.size * 2.2;
+        const drawHeight = currentSize * 2.2;
         const drawWidth = drawHeight * aspect;
         ctx.drawImage(asset, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
       }
-    } catch (e) {
-      ctx.fillStyle = 'rgba(45, 212, 191, 0.2)';
-      ctx.arc(0, 0, this.size, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    } catch (e) {}
     ctx.restore();
   }
 }

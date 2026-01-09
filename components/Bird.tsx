@@ -1,15 +1,10 @@
 import { CreatureEntity, CreatureState, Species, IdleAction, CustomBirdConfig } from '../types';
 import { FALLBACK_PHOENIX_BASE64 } from '../constants';
 
-// 全局资源单例管理器，确保同一 URL 只创建一个实例
 const GlobalAssetManager: Record<string, HTMLImageElement | HTMLVideoElement> = {};
 
-/**
- * 确保资源被加载并驻留在 DOM 中（解决部分浏览器垃圾回收导致 Canvas 丢失纹理的问题）
- */
 const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => {
   if (GlobalAssetManager[url]) return GlobalAssetManager[url];
-
   const isVideo = /\.(mp4|webm|mov)$/i.test(url);
   let container = document.getElementById('ar-asset-pool');
   if (!container) {
@@ -21,13 +16,10 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
     });
     document.body.appendChild(container);
   }
-
   if (isVideo) {
     const video = document.createElement('video');
     video.src = url;
-    video.muted = true;
-    video.loop = true;
-    video.autoplay = true;
+    video.muted = true; video.loop = true; video.autoplay = true;
     video.setAttribute('playsinline', '');
     video.setAttribute('data-src', url);
     video.crossOrigin = "anonymous";
@@ -40,14 +32,11 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
     img.crossOrigin = "anonymous";
     img.src = url;
     img.setAttribute('data-src', url);
-    
     img.onerror = () => {
       if (img.src !== FALLBACK_PHOENIX_BASE64) {
-        console.warn(`Bird asset load failed, falling back to embedded sprite: ${url}`);
         img.src = FALLBACK_PHOENIX_BASE64;
       }
     };
-
     container.appendChild(img);
     GlobalAssetManager[url] = img;
     return img;
@@ -67,22 +56,20 @@ export class Bird implements CreatureEntity {
   velocityX: number;
   color: string;
   size: number = 20;
+  depthScale: number = 1.0;
   state: CreatureState;
   perchOffset: number;
   species: Species;
   customConfig?: CustomBirdConfig;
-  
   idleAction: IdleAction = 'idle';
   actionTimer: number = 0;
   variantSeed: number;
   facing: number = 1;
   opacity: number = 1.0;
-
   private hopY: number = 0;
   private isHopping: boolean = false;
   private hopProgress: number = 0;
   private nextHopTime: number = 0;
-  private landedTime: number = 0;
   private screenWidth: number;
   private screenHeight: number;
 
@@ -99,13 +86,11 @@ export class Bird implements CreatureEntity {
     this.variantSeed = Math.random();
     this.screenWidth = screenWidth;
     this.screenHeight = screenHeight;
-    
     const side = Math.floor(Math.random() * 3); 
     const buffer = 400;
     if (side === 0) { this.originX = Math.random() * screenWidth; this.originY = -buffer; }
     else if (side === 1) { this.originX = -buffer; this.originY = Math.random() * screenHeight * 0.4; }
     else { this.originX = screenWidth + buffer; this.originY = Math.random() * screenHeight * 0.4; }
-
     this.x = this.originX;
     this.y = this.originY;
     this.targetX = screenWidth / 2;
@@ -114,7 +99,6 @@ export class Bird implements CreatureEntity {
     this.velocityY = 0;
     this.state = CreatureState.FLYING_IN;
     this.perchOffset = forcedOffset !== undefined ? forcedOffset : (0.1 + Math.random() * 0.8);
-
     if (customConfigs && customConfigs.length > 0) {
       this.updateConfig(customConfigs[0]);
     }
@@ -123,37 +107,34 @@ export class Bird implements CreatureEntity {
   updateConfig(cfg: CustomBirdConfig) {
     this.customConfig = cfg;
     this.species = cfg.name;
+    // 预加载两个状态的资源
     forceAnimateInDOM(cfg.mainAsset);
+    if (cfg.standingAsset) {
+      forceAnimateInDOM(cfg.standingAsset);
+    }
     const sizeVar = (cfg.sizeRange || 0.6);
     const randomScale = 0.7 + (this.variantSeed * sizeVar * 1.5); 
-    // 基础尺寸 * 用户缩放 * 变体随机缩放 * 0.56(代表30%缩小修正)
-    const speciesBaseSize = cfg.baseSize * (cfg.globalScale || 1.0) * randomScale * 0.56; 
-    let targetScale = 1.0;
-    if (this.targetId === 'Head') targetScale = 0.75;
-    else if (this.targetId === 'Shoulders') targetScale = 0.9;
-    this.size = speciesBaseSize * targetScale;
+    this.size = cfg.baseSize * (cfg.globalScale || 1.0) * randomScale * 0.56;
   }
 
-  update(dt: number, perchTarget: { x: number, y: number } | null, siblings?: Bird[]) {
+  update(dt: number, perchTarget: { x: number, y: number } | null, siblings?: Bird[], depthScale: number = 1.0) {
+    this.depthScale = depthScale;
     this.actionTimer += dt;
     const smoothFactor = 1.0 - Math.pow(0.001, dt / 1000);
 
     if (this.state === CreatureState.FLYING_IN) {
       this.opacity = 1.0;
-      this.hopY = 0;
-      this.isHopping = false;
       let tx, ty;
       if (perchTarget && this.targetId !== "Searching" && this.targetId !== "none") {
         const swayX = Math.sin(this.actionTimer * 0.002 + this.variantSeed * 10) * 15;
         const swayY = Math.cos(this.actionTimer * 0.0015) * 8;
         tx = perchTarget.x + swayX;
-        ty = perchTarget.y - (this.size * 0.3) + swayY;
+        ty = perchTarget.y - (this.size * this.depthScale * 0.3) + swayY;
       } else {
         const t = this.actionTimer * 0.00015;
         tx = this.targetX + Math.sin(t + this.variantSeed * 10) * 300;
         ty = 150 + Math.cos(t * 0.8) * 50; 
       }
-
       const dx = tx - this.x, dy = ty - this.y;
       const dist = Math.sqrt(dx*dx + dy*dy);
       const speed = Math.min(0.0006 * dist, 0.08) * dt; 
@@ -162,36 +143,30 @@ export class Bird implements CreatureEntity {
       this.velocityY = Math.sin(angle) * speed;
       this.x += this.velocityX;
       this.y += this.velocityY;
-
       if (perchTarget && dist < 12 && this.targetId !== "Searching" && this.targetId !== "none") {
         this.state = CreatureState.PERCHED;
-        this.landedTime = this.actionTimer;
         this.nextHopTime = this.actionTimer + 1500 + Math.random() * 3000;
       }
     } 
     else if (this.state === CreatureState.PERCHED && perchTarget) {
       this.opacity = 1.0;
-      const targetY = perchTarget.y - (this.size * 0.35);
+      const targetY = perchTarget.y - (this.size * this.depthScale * 0.35);
       this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
       this.y = this.y + (targetY - this.y) * (smoothFactor * 16);
       this.velocityX = 0;
-
       if (!this.isHopping && this.actionTimer > this.nextHopTime) {
         this.isHopping = true;
         this.hopProgress = 0;
       }
-
       if (this.isHopping) {
         this.hopProgress += dt * 0.008;
-        this.hopY = -Math.abs(Math.sin(this.hopProgress)) * (this.size * 0.4);
+        this.hopY = -Math.abs(Math.sin(this.hopProgress)) * (this.size * this.depthScale * 0.4);
         if (this.hopProgress >= Math.PI) { 
           this.hopY = 0;
           this.isHopping = false;
           this.nextHopTime = this.actionTimer + 2000 + Math.random() * 4000;
         }
-      } else {
-        this.hopY = 0;
-      }
+      } else { this.hopY = 0; }
     } 
     else if (this.state === CreatureState.FLYING_AWAY) {
       const currentSpeed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
@@ -200,7 +175,6 @@ export class Bird implements CreatureEntity {
         const centerY = this.screenHeight / 2;
         let angle = Math.atan2(this.y - centerY, this.x - centerX);
         if (angle > 0) angle = -angle;
-        // 降低飞走的速度 30%: 原本 8~16 -> 调整为 5.6~11.2
         const escapeSpeed = 5.6 + Math.random() * 5.6; 
         this.velocityX = Math.cos(angle) * escapeSpeed;
         this.velocityY = Math.sin(angle) * escapeSpeed;
@@ -208,102 +182,84 @@ export class Bird implements CreatureEntity {
       }
       this.x += this.velocityX;
       this.y += this.velocityY;
-      this.hopY = 0;
-      this.isHopping = false;
-      this.opacity = 1.0; 
     }
-
-    if (Math.abs(this.velocityX) > 0.05) {
-      this.facing = this.velocityX > 0 ? -1 : 1;
-    }
+    if (Math.abs(this.velocityX) > 0.05) { this.facing = this.velocityX > 0 ? -1 : 1; }
   }
 
   draw(ctx: CanvasRenderingContext2D) {
     if (!this.customConfig || this.opacity <= 0) return;
-    
-    // 获取资源引用
-    const asset = GlobalAssetManager[this.customConfig.mainAsset] || forceAnimateInDOM(this.customConfig.mainAsset);
-    
-    // 严格的就绪判定
+    const cfg = this.customConfig;
+
+    // 状态检测：如果处于 PERCHED 状态且配置了 standingAsset，则使用站立素材，否则使用飞行素材
+    const isPerched = this.state === CreatureState.PERCHED;
+    const isUsingStanding = !!(isPerched && cfg.standingAsset);
+    const currentAssetUrl = isUsingStanding ? cfg.standingAsset! : cfg.mainAsset;
+    const asset = GlobalAssetManager[currentAssetUrl] || forceAnimateInDOM(currentAssetUrl);
+
     let isReady = false;
     let iw = 0, ih = 0;
-
     if (asset instanceof HTMLImageElement) {
       isReady = asset.complete && asset.naturalWidth > 0;
-      iw = asset.naturalWidth;
-      ih = asset.naturalHeight;
+      iw = asset.naturalWidth; ih = asset.naturalHeight;
     } else if (asset instanceof HTMLVideoElement) {
       isReady = asset.readyState >= 2 && asset.videoWidth > 0;
-      iw = asset.videoWidth;
-      ih = asset.videoHeight;
+      iw = asset.videoWidth; ih = asset.videoHeight;
     }
 
     ctx.save();
     ctx.globalAlpha = this.opacity;
     ctx.translate(this.x, this.y + this.hopY);
     ctx.scale(this.facing, 1);
+    
+    const currentSize = this.size * this.depthScale;
 
-    if (this.state === CreatureState.PERCHED) {
-      const stretch = Math.abs(this.hopY / this.size) * 0.4;
+    if (isPerched) {
+      const stretch = Math.abs(this.hopY / currentSize) * 0.4;
       ctx.scale(1.0 - stretch, 1.0 + stretch);
     }
 
-    // 未就绪时的防御性渲染（画一个漂亮的占位框）
     if (!isReady) {
       ctx.fillStyle = 'rgba(45, 212, 191, 0.1)';
-      ctx.beginPath();
-      ctx.roundRect(-this.size, -this.size, this.size * 2, this.size * 2, 12);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(45, 212, 191, 0.4)';
-      ctx.setLineDash([4, 4]);
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.restore();
-      return;
+      ctx.beginPath(); ctx.roundRect(-currentSize, -currentSize, currentSize * 2, currentSize * 2, 12); ctx.fill();
+      ctx.restore(); return;
     }
 
-    const cfg = this.customConfig;
-    
     try {
-      if (cfg.isSpriteSheet && cfg.frameCount && cfg.frameCount > 0) {
-        // 防御性切片计算：确保 iw 存在且有效
-        const frameWidth = iw / cfg.frameCount;
+      if (cfg.isSpriteSheet) {
+        // 判断当前帧数配置
+        const currentFrameCount = isUsingStanding ? (cfg.standingFrameCount || 39) : (cfg.frameCount || 1);
+        const frameWidth = iw / currentFrameCount;
         const frameHeight = ih;
         
-        if (frameWidth <= 0) throw new Error("Invalid frameWidth");
-
-        const frameRate = (this.state === CreatureState.PERCHED && !this.isHopping) ? 4 : (cfg.frameRate || 24);
+        // ★★★ 核心修复：根据状态调整播放速率 ★★★
+        let frameRate = cfg.frameRate || 24;
+        if (isPerched && !this.isHopping) {
+          if (isUsingStanding) {
+            // 用户反馈站立太快，减慢 30%
+            frameRate *= 0.7;
+          } else {
+            // 普通停靠（无独立素材）使用极低帧率
+            frameRate = 4;
+          }
+        }
         
-        // 随机偏移时间解决第一帧同步卡顿
         const timeOffset = this.variantSeed * 10000; 
-        const currentFrame = Math.floor(((this.actionTimer + timeOffset) * frameRate) / 1000) % cfg.frameCount;
-        
+        const currentFrame = Math.floor(((this.actionTimer + timeOffset) * frameRate) / 1000) % currentFrameCount;
         const sx = currentFrame * frameWidth;
         const aspect = frameWidth / frameHeight;
-        const drawHeight = this.size * 2.2; 
+        const drawHeight = currentSize * 2.2; 
         const drawWidth = drawHeight * aspect;
-
+        
         ctx.translate((cfg.globalX || 0), (cfg.globalY || 0));
         ctx.rotate((cfg.globalRotation || 0) * Math.PI / 180);
-        
-        // 核心绘图：try-catch 保证不中断
-        ctx.drawImage(
-          asset, 
-          sx, 0, frameWidth, frameHeight, 
-          -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight
-        );
+        ctx.drawImage(asset, sx, 0, frameWidth, frameHeight, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
       } else {
         const aspect = iw / ih;
-        const drawHeight = this.size * 2.2; 
+        const drawHeight = currentSize * 2.2; 
         const drawWidth = drawHeight * aspect;
         ctx.drawImage(asset, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
       }
-    } catch (e) {
-      // 如果绘图失败，回退到占位符而不是让程序崩溃
-      ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
-      ctx.fillRect(-this.size, -this.size, this.size * 2, this.size * 2);
-    }
-
+    } catch (e) {}
     ctx.restore();
   }
 }
