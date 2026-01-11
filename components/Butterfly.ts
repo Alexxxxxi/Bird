@@ -139,22 +139,20 @@ export class Butterfly implements CreatureEntity {
     } 
     else if (this.state === CreatureState.PERCHED) {
       this.opacity = 1.0;
+      let shouldFollow = false;
       
-      // Strengthened stability: Anti-teleportation & NaN protection
-      let isValidTarget = false;
       if (perchTarget && !isNaN(perchTarget.x) && !isNaN(perchTarget.y)) {
          const distSq = Math.pow(perchTarget.x - this.x, 2) + Math.pow(perchTarget.y - this.y, 2);
-         // 25000 (approx 150px) jitter threshold
-         if (distSq < 25000 || this.actionTimer < 500) {
-            isValidTarget = true;
+         // Butterfly gets even larger tolerance (approx 550px)
+         if (distSq < 300000) {
+            shouldFollow = true;
          }
       }
-
-      if (perchTarget && isValidTarget) {
+      
+      if (shouldFollow && perchTarget) {
         this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
         this.y = this.y + (perchTarget.y - this.y) * (smoothFactor * 16);
       } else {
-        // Target lost or detection jumped: stay static
         this.velocityX = 0;
         this.velocityY = 0;
       }

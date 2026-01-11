@@ -149,23 +149,26 @@ export class Bird implements CreatureEntity {
     } 
     else if (this.state === CreatureState.PERCHED) {
       this.opacity = 1.0;
+      let shouldFollow = false;
       
-      // Robustness: Anti-teleportation & NaN protection
-      let isValidTarget = false;
+      // 1. Ensure target exists and coordinates are valid (prevent NaN jumps/disappearance)
       if (perchTarget && !isNaN(perchTarget.x) && !isNaN(perchTarget.y)) {
          const distSq = Math.pow(perchTarget.x - this.x, 2) + Math.pow(perchTarget.y - this.y, 2);
-         // Tolerance increased to 25000 (approx 150px) to handle device jitter
-         if (distSq < 25000 || this.actionTimer < 500) {
-            isValidTarget = true;
+         
+         // 2. Significantly increase threshold to 250,000 (approx 500px)
+         // This is enough to cover rapid mobile movement while filtering true outliers
+         if (distSq < 250000) {
+            shouldFollow = true;
          }
       }
-
-      if (perchTarget && isValidTarget) {
+      
+      if (shouldFollow && perchTarget) {
         const targetY = perchTarget.y - (this.size * this.depthScale * 0.35);
+        // Smooth following
         this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
         this.y = this.y + (targetY - this.y) * (smoothFactor * 16);
       } else {
-        // Stop movement if target jumps too far or is invalid
+        // Only freeze if distance is extremely large (>500px) or target is invalid
         this.velocityX = 0;
         this.velocityY = 0;
       }
