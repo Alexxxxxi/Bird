@@ -306,7 +306,7 @@ const HandAR: React.FC = () => {
         const ASSETS_TO_PRELOAD = [
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/_1-ezgif.com-gif-to-sprite-converter.png",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand%20V2.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/butterfly.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Butterfly%20V2.gif",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/LOGO.png"
         ];
@@ -340,11 +340,13 @@ const HandAR: React.FC = () => {
           hands.onResults((r: any) => onHandResultsRef.current(r));
           handsRef.current = hands;
         }
-        const existing = await getAllBirdsFromDB();
-        if (existing.length === 0) {
-          for (const p of PRESET_BIRDS) await saveBirdToDB(p);
-          customCreaturesRef.current = await getAllBirdsFromDB();
-        } else { customCreaturesRef.current = existing; }
+
+        // Force-sync presets from constants into IndexedDB to ensure configuration updates are applied
+        for (const p of PRESET_BIRDS) {
+          await saveBirdToDB(p);
+        }
+        
+        customCreaturesRef.current = await getAllBirdsFromDB();
         setCustomCreatures(customCreaturesRef.current);
         setIsLoading(false);
       } catch (e: any) {

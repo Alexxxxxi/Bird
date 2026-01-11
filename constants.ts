@@ -42,14 +42,16 @@ export const PRESET_BIRDS: CustomBirdConfig[] = [
     id: 'blue-morpho',
     name: 'Blue Morpho',
     category: 'butterfly',
-    mainAsset: 'https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/butterfly.png',
+    mainAsset: 'https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Butterfly%20V2.png',
     globalScale: 1.2,
     globalRotation: 0,
+    globalX: 0,
+    globalY: 0,
     flapAmplitude: 2.0,
     baseSize: 50,
     sizeRange: 0.1,
     isSpriteSheet: true,
-    frameCount: 45,
-    frameRate: 24
+    frameCount: 6,
+    frameRate: 12
   }
 ];

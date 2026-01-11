@@ -22,14 +22,15 @@ const forceAnimateInDOM = (url: string): HTMLImageElement | HTMLVideoElement => 
     video.muted = true; video.loop = true; video.autoplay = true;
     video.setAttribute('playsinline', '');
     video.setAttribute('data-src', url);
+    video.crossOrigin = "anonymous";
     container.appendChild(video);
     video.play().catch(() => {});
     GlobalAssetManager[url] = video;
     return video;
   } else {
     const img = new Image();
-    img.src = url;
     img.crossOrigin = "anonymous";
+    img.src = url;
     img.setAttribute('data-src', url);
     img.onerror = () => { if (img.src !== FALLBACK_PHOENIX_BASE64) img.src = FALLBACK_PHOENIX_BASE64; };
     container.appendChild(img);
@@ -168,7 +169,9 @@ export class Butterfly implements CreatureEntity {
 
   draw(ctx: CanvasRenderingContext2D) {
     if (!this.customConfig || this.opacity <= 0) return;
-    const asset = GlobalAssetManager[this.customConfig.mainAsset] || forceAnimateInDOM(this.customConfig.mainAsset);
+    const cfg = this.customConfig;
+    const asset = GlobalAssetManager[cfg.mainAsset] || forceAnimateInDOM(cfg.mainAsset);
+    
     let isReady = false;
     let iw = 0, ih = 0;
     if (asset instanceof HTMLImageElement) {
@@ -178,6 +181,7 @@ export class Butterfly implements CreatureEntity {
       isReady = asset.readyState >= 2 && asset.videoWidth > 0;
       iw = asset.videoWidth; ih = asset.videoHeight;
     }
+
     ctx.save();
     ctx.globalAlpha = this.opacity;
     ctx.translate(this.x, this.y + this.hopY);
@@ -189,27 +193,36 @@ export class Butterfly implements CreatureEntity {
       const stretch = Math.abs(this.hopY / currentSize) * 0.3;
       ctx.scale(1.0 - stretch, 1.0 + stretch);
     }
+
     if (!isReady) {
       ctx.fillStyle = 'rgba(45, 212, 191, 0.1)';
       ctx.beginPath(); ctx.arc(0, 0, currentSize, 0, Math.PI * 2); ctx.fill();
       ctx.restore(); return;
     }
-    const cfg = this.customConfig;
+
     try {
       if (cfg.isSpriteSheet && cfg.frameCount && cfg.frameCount > 0) {
         const frameWidth = iw / cfg.frameCount;
         const frameHeight = ih;
-        const frameRate = this.state === CreatureState.PERCHED && !this.isHopping ? 6 : (cfg.frameRate || 24);
+        // Slower wing beat when perched
+        let frameRate = (this.state === CreatureState.PERCHED && !this.isHopping) ? 8 : (cfg.frameRate || 24);
+        
         const timeOffset = this.variantSeed * 10000;
         const currentFrame = Math.floor(((this.actionTimer + timeOffset) * frameRate) / 1000) % cfg.frameCount;
         const sx = currentFrame * frameWidth;
         const aspect = frameWidth / frameHeight;
-        const drawHeight = currentSize * 2.2;
+        
+        // Butterfly frames are 300x300, aspect 1.
+        const drawHeight = currentSize * 2.5; 
         const drawWidth = drawHeight * aspect;
+
+        ctx.translate((cfg.globalX || 0), (cfg.globalY || 0));
+        ctx.rotate((cfg.globalRotation || 0) * Math.PI / 180);
+        
         ctx.drawImage(asset, sx, 0, frameWidth, frameHeight, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
       } else {
         const aspect = iw / ih;
-        const drawHeight = currentSize * 2.2;
+        const drawHeight = currentSize * 2.5;
         const drawWidth = drawHeight * aspect;
         ctx.drawImage(asset, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
       }
