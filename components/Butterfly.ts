@@ -139,11 +139,22 @@ export class Butterfly implements CreatureEntity {
     } 
     else if (this.state === CreatureState.PERCHED) {
       this.opacity = 1.0;
+      
+      // Strengthened stability: Anti-teleportation logic
+      let isValidTarget = false;
       if (perchTarget) {
+         const distSq = Math.pow(perchTarget.x - this.x, 2) + Math.pow(perchTarget.y - this.y, 2);
+         // Butterflies have slightly larger tolerance than birds due to flutter nature
+         if (distSq < 15000 || this.actionTimer < 500) {
+            isValidTarget = true;
+         }
+      }
+
+      if (perchTarget && isValidTarget) {
         this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
         this.y = this.y + (perchTarget.y - this.y) * (smoothFactor * 16);
       } else {
-        // Target lost: stay at current position
+        // Target lost or detection jumped: stay static
         this.velocityX = 0;
         this.velocityY = 0;
       }

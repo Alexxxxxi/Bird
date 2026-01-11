@@ -149,12 +149,23 @@ export class Bird implements CreatureEntity {
     } 
     else if (this.state === CreatureState.PERCHED) {
       this.opacity = 1.0;
+      
+      // Strengthened stability: Anti-teleportation logic
+      let isValidTarget = false;
       if (perchTarget) {
+         const distSq = Math.pow(perchTarget.x - this.x, 2) + Math.pow(perchTarget.y - this.y, 2);
+         // If target jumps > 100px in one frame, ignore it as noise
+         if (distSq < 10000 || this.actionTimer < 500) {
+            isValidTarget = true;
+         }
+      }
+
+      if (perchTarget && isValidTarget) {
         const targetY = perchTarget.y - (this.size * this.depthScale * 0.35);
         this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
         this.y = this.y + (targetY - this.y) * (smoothFactor * 16);
       } else {
-        // Target lost: Stay still at last known position
+        // Target lost or detection jumped: stay static
         this.velocityX = 0;
         this.velocityY = 0;
       }

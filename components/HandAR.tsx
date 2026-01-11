@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "1.0";
+const APP_VERSION = "1.1";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -343,9 +343,10 @@ const HandAR: React.FC = () => {
           handsRef.current = hands;
         }
 
-        // FORCE SYNC: Always overwrite database with latest hardcoded presets to ensure config updates are applied
+        // FORCE SYNC: Enhanced database synchronization to ensure hardcoded presets overwrite IndexedDB completely
         for (const p of PRESET_BIRDS) {
-          await saveBirdToDB(p);
+          await deleteBirdFromDB(p.id); // Clear potential legacy data
+          await saveBirdToDB(p);        // Apply current hardcoded config
         }
         
         customCreaturesRef.current = await getAllBirdsFromDB();
@@ -420,7 +421,7 @@ const HandAR: React.FC = () => {
         </button>
       </div>
 
-      {/* Version number in the exact center */}
+      {/* Center-aligned Version Display with Microsoft YaHei font */}
       <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
         <span 
           className="text-white text-sm font-bold tracking-widest uppercase opacity-40"
