@@ -6,12 +6,12 @@ import { getDistance, lerp, isFist, getUpperHandHull, getPointOnPolyline } from 
 import { PRESET_BIRDS } from '../constants';
 import { saveBirdToDB, getAllBirdsFromDB, deleteBirdFromDB } from '../utils/db';
 import { 
-  X, Settings2, Sparkles, Trash2, RefreshCw 
+  X, Sparkles, Trash2, RefreshCw, Camera as CameraIcon, ChevronDown, FlipHorizontal 
 } from 'lucide-react';
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.4";
+const APP_VERSION = "2.16"; 
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -72,6 +72,7 @@ interface ActiveStar {
   rotation: number;
   opacity: number;
   heldByHandId?: string;
+  isFadingOut?: boolean;
 }
 
 interface ActiveParticle {
@@ -86,12 +87,9 @@ interface ActiveParticle {
 
 const isGestureC = (landmarks: any[]) => {
    if (!landmarks || landmarks.length < 21) return false;
-   // Distance between Wrist(0) and Middle Finger MCP(9) as palm size reference
    const palmSize = Math.hypot(landmarks[0].x - landmarks[9].x, landmarks[0].y - landmarks[9].y);
-   // Distance between Thumb Tip(4) and Index Tip(8)
    const tipDist = Math.hypot(landmarks[4].x - landmarks[8].x, landmarks[4].y - landmarks[8].y);
-   // "C" gesture criteria: tip distance between 0.3 and 0.8 times palm size
-   return tipDist > palmSize * 0.3 && tipDist < palmSize * 0.8;
+   return tipDist > palmSize * 0.15 && tipDist < palmSize * 1.1;
 };
 
 const preloadImage = (url: string) => {
@@ -147,7 +145,6 @@ const HandAR: React.FC = () => {
 
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [showAssetPanel, setShowAssetPanel] = useState(false);
   const [customCreatures, setCustomCreatures] = useState<CustomBirdConfig[]>([]);
   const customCreaturesRef = useRef<CustomBirdConfig[]>([]);
   const [anySmile, setAnySmile] = useState(false);
@@ -157,18 +154,30 @@ const HandAR: React.FC = () => {
   const hasSmiledRef = useRef(false);
   const isFaceVisibleRef = useRef(false);
 
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [showCameraDropdown, setShowCameraDropdown] = useState(false);
+  const [isMirrored, setIsMirrored] = useState(true); 
+  const isMirroredRef = useRef(true); 
+
   const creaturesRef = useRef<any[]>([]);
   const activeLeaves = useRef<ActiveLeaf[]>([]);
   const activeStars = useRef<ActiveStar[]>([]);
   const activeParticles = useRef<ActiveParticle[]>([]);
   const limbStatesRef = useRef<Map<string, LimbStateData>>(new Map());
+  
+  const gestureHoldStates = useRef<Map<string, { startTime: number, startX: number, startY: number }>>(new Map());
+
   const faceMeshRef = useRef<any>(null);
   const handsRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
   const globalFaceWidthRef = useRef<number>(240);
   const lastSpawnTimesRef = useRef<Map<string, number>>(new Map());
 
-  // Global leaf drop callback
+  useEffect(() => {
+    isMirroredRef.current = isMirrored;
+  }, [isMirrored]);
+
   const handleLeafDrop = useCallback((x: number, y: number, targetId: string, depthScale: number) => {
     const tracker = limbStatesRef.current.get(targetId);
     if (!tracker) return;
@@ -211,6 +220,44 @@ const HandAR: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const getCameras = async () => {
+      try {
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        setDevices(videoDevices);
+      } catch (err) {
+        console.error("Error accessing media devices.", err);
+      }
+    };
+    getCameras();
+  }, []);
+
+  const switchCamera = async (deviceId: string) => {
+      setSelectedDeviceId(deviceId);
+      setShowCameraDropdown(false);
+      setIsLoading(true);
+
+      if (cameraRef.current) {
+          await cameraRef.current.stop();
+      }
+
+      if (videoRef.current && window.Camera) {
+          cameraRef.current = new window.Camera(videoRef.current, {
+            onFrame: async () => {
+              if (!videoRef.current) return;
+              if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoRef.current });
+              if (handsRef.current) await handsRef.current.send({ image: videoRef.current });
+            },
+            width: 1280, height: 720,
+            deviceId: deviceId
+          });
+          await cameraRef.current.start();
+          setIsLoading(false);
+      }
+  };
+
+  useEffect(() => {
     let frameId: number;
     let lastTime = performance.now();
     const render = (time: number) => {
@@ -226,18 +273,32 @@ const HandAR: React.FC = () => {
       const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
       const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
       const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-      ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.drawImage(video, ox, oy, dw, dh); ctx.restore();
+      
+      if (isMirroredRef.current) {
+          ctx.translate(canvas.width, 0); 
+          ctx.scale(-1, 1);
+      } else {
+          ctx.translate(0, 0);
+          ctx.scale(1, 1);
+      }
+      
+      ctx.drawImage(video, ox, oy, dw, dh); 
+      ctx.restore();
 
-      // ==========================================
-      // --- 1. Update & Draw Leaves (叶子逻辑) ---
-      // ==========================================
       activeLeaves.current = activeLeaves.current.filter(leaf => {
         const tracker = limbStatesRef.current.get(leaf.anchorId);
+
+        if (leaf.anchorId.startsWith('Hand_')) {
+            if (!tracker || tracker.missingFrames > 5) {
+                return false; 
+            }
+        }
+
         if (tracker && tracker.missingFrames < 30) {
           leaf.x = tracker.centroid.x + leaf.offsetX;
           leaf.y = tracker.centroid.y + leaf.offsetY;
         } else {
-          leaf.opacity -= 0.02;
+          leaf.opacity -= 0.02; 
         }
 
         if (handsRef.current && !leaf.isTransforming) {
@@ -308,9 +369,6 @@ const HandAR: React.FC = () => {
         return leaf.opacity > 0;
       });
 
-      // ==========================================
-      // --- 2. Update & Draw Particles (黄金粒子) ---
-      // ==========================================
       activeParticles.current = activeParticles.current.filter(p => {
         p.x += (p.tx - p.x) * p.speed;
         p.y += (p.ty - p.y) * p.speed;
@@ -339,71 +397,108 @@ const HandAR: React.FC = () => {
         return false;
       });
 
-      // ==========================================
-      // --- ★ Hand Gesture "C" Logic ---
-      // ==========================================
       if (handsRef.current) {
           ['Hand_0', 'Hand_1'].forEach(handId => {
               const tracker = limbStatesRef.current.get(handId);
-              if (tracker && tracker.missingFrames < 5 && tracker.rawPoints.palm) {
-                  const palm = tracker.rawPoints.palm;
+              if (tracker && tracker.missingFrames < 5 && tracker.rawPoints.fullLandmarks) {
                   const landmarks = tracker.rawPoints.fullLandmarks;
-                  const isC = isGestureC(landmarks);
                   
+                  const thumbTip = landmarks[4];
+                  const indexTip = landmarks[8];
+                  const midX = (thumbTip.x + indexTip.x) / 2;
+                  const midY = (thumbTip.y + indexTip.y) / 2;
+                  
+                  const isC = isGestureC(landmarks);
                   const heldStar = activeStars.current.find(s => s.heldByHandId === handId);
                   
                   if (isC) {
                       if (!heldStar) {
-                          const starImg = new Image();
-                          starImg.src = STAR_ASSETS[Math.floor(Math.random() * STAR_ASSETS.length)];
-                          activeStars.current.push({
-                              id: Math.random().toString(36),
-                              img: starImg,
-                              x: palm.x,
-                              y: palm.y,
-                              scale: 0.05,
-                              rotation: 0,
-                              opacity: 0,
-                              heldByHandId: handId
-                          });
-                          for (let i = 0; i < 15; i++) {
-                              const angle = Math.random() * Math.PI * 2;
-                              const startDist = 50 + Math.random() * 30;
-                              activeParticles.current.push({
-                                  x: palm.x + Math.cos(angle) * startDist,
-                                  y: palm.y + Math.sin(angle) * startDist,
-                                  tx: palm.x, 
-                                  ty: palm.y,
-                                  speed: 0.15,
-                                  opacity: 1.0,
-                                  size: 2.0 + Math.random() * 2.0
-                              });
+                          let holdState = gestureHoldStates.current.get(handId);
+                          
+                          if (!holdState) {
+                              holdState = { startTime: performance.now(), startX: midX, startY: midY };
+                              gestureHoldStates.current.set(handId, holdState);
+                          } else {
+                              const distMoved = Math.hypot(midX - holdState.startX, midY - holdState.startY);
+                              
+                              if (distMoved > 30) {
+                                  holdState.startTime = performance.now();
+                                  holdState.startX = midX;
+                                  holdState.startY = midY;
+                              } else {
+                                  if (performance.now() - holdState.startTime > 800) {
+                                      const starImg = new Image();
+                                      starImg.src = STAR_ASSETS[Math.floor(Math.random() * STAR_ASSETS.length)];
+                                      activeStars.current.push({
+                                          id: Math.random().toString(36),
+                                          img: starImg,
+                                          x: midX,
+                                          y: midY,
+                                          scale: 0.05,
+                                          rotation: 0,
+                                          opacity: 0,
+                                          heldByHandId: handId,
+                                          isFadingOut: false
+                                      });
+                                      
+                                      for (let i = 0; i < 15; i++) {
+                                          const angle = Math.random() * Math.PI * 2;
+                                          const startDist = 50 + Math.random() * 30;
+                                          activeParticles.current.push({
+                                              x: midX + Math.cos(angle) * startDist,
+                                              y: midY + Math.sin(angle) * startDist,
+                                              tx: midX, 
+                                              ty: midY,
+                                              speed: 0.15,
+                                              opacity: 1.0,
+                                              size: 2.0 + Math.random() * 2.0
+                                          });
+                                      }
+                                      
+                                      gestureHoldStates.current.delete(handId);
+                                  }
+                              }
                           }
                       } else {
-                          heldStar.x = palm.x;
-                          heldStar.y = palm.y;
+                          heldStar.x = midX;
+                          heldStar.y = midY;
+                          gestureHoldStates.current.delete(handId);
                       }
                   } else {
+                      gestureHoldStates.current.delete(handId);
                       if (heldStar) heldStar.heldByHandId = undefined;
                   }
+              } else {
+                  gestureHoldStates.current.delete(handId);
               }
           });
       }
 
-      // ==========================================
-      // --- 3. Update & Draw Stars (逻辑升级) ---
-      // ==========================================
       activeStars.current = activeStars.current.filter(star => {
         if (star.heldByHandId) {
-            if (star.scale < 0.8) star.scale += 0.02;
-            if (star.opacity < 1.0) star.opacity += 0.05;
+            const handTracker = limbStatesRef.current.get(star.heldByHandId);
+            if (!handTracker || handTracker.missingFrames > 5) {
+                return false; 
+            }
+
+            if (!star.isFadingOut) {
+                if (star.scale < 0.8) star.scale += 0.02; 
+                if (star.opacity < 1.0) star.opacity += 0.05; 
+                
+                if (star.scale >= 0.8 && star.opacity >= 1.0) {
+                    star.isFadingOut = true; 
+                }
+            } else {
+                star.opacity -= 0.03; 
+                if (star.opacity <= 0) {
+                    return false; 
+                }
+            }
             
             if (star.img.complete && star.img.naturalWidth > 0) {
                 ctx.save();
-                ctx.globalAlpha = star.opacity;
+                ctx.globalAlpha = Math.max(0, star.opacity);
                 ctx.translate(star.x, star.y);
-                star.rotation += 0.02; 
-                ctx.rotate(star.rotation);
                 const s = 120 * star.scale; 
                 ctx.drawImage(star.img, -s/2, -s/2, s, s);
                 ctx.restore();
@@ -438,6 +533,13 @@ const HandAR: React.FC = () => {
       });
 
       creaturesRef.current = creaturesRef.current.filter(c => {
+        if (c.targetId.startsWith('Hand_')) {
+            const handTracker = limbStatesRef.current.get(c.targetId);
+            if (!handTracker || handTracker.missingFrames > 5) {
+                return false; 
+            }
+        }
+
         let targetPoint = null;
         let depthScale = Math.min(Math.max(globalFaceWidthRef.current / REFERENCE_FACE_WIDTH, 0.3), 3.0);
         const state = limbStatesRef.current.get(c.targetId);
@@ -501,13 +603,23 @@ const HandAR: React.FC = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-      setAnySmile(false); isFaceVisibleRef.current = false; return;
+      setAnySmile(false); isFaceVisibleRef.current = false; 
+      creaturesRef.current = [];
+      activeLeaves.current = [];
+      activeStars.current = [];
+      activeParticles.current = [];
+      gestureHoldStates.current.clear();
+      return;
     }
     isFaceVisibleRef.current = true;
     const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
     const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
     const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-    const toPx = (l: any) => ({ x: (1.0 - l.x) * dw + ox, y: l.y * dh + oy });
+    
+    const toPx = (l: any) => {
+        const x = isMirroredRef.current ? (1.0 - l.x) : l.x;
+        return { x: x * dw + ox, y: l.y * dh + oy };
+    };
 
     const landmarks = results.multiFaceLandmarks[0];
     const earL = toPx(landmarks[234]), earR = toPx(landmarks[454]);
@@ -570,7 +682,12 @@ const HandAR: React.FC = () => {
     const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
     const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
     const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-    const toPx = (l: any) => ({ x: (1.0 - l.x) * dw + ox, y: l.y * dh + oy });
+    
+    const toPx = (l: any) => {
+        const x = isMirroredRef.current ? (1.0 - l.x) : l.x;
+        return { x: x * dw + ox, y: l.y * dh + oy };
+    };
+
     results.multiHandLandmarks.forEach((landmarks: any, index: number) => {
       const handId = `Hand_${index}`;
       const pxLandmarks = landmarks.map(toPx);
@@ -706,13 +823,12 @@ const HandAR: React.FC = () => {
 
       <div className="absolute top-6 left-6 z-30 pointer-events-none flex items-center gap-4">
         <div className={`w-3 h-3 rounded-full transition-all duration-300 ${anySmile ? 'bg-teal-400 shadow-[0_0_10px_#2dd4bf]' : 'bg-white/20'}`} />
-        <span className="text-white/40 text-[10px] font-mono tracking-widest uppercase">Smile Sensor</span>
       </div>
       
-      <div className={`absolute bottom-20 left-1/2 -translate-x-1/2 z-30 pointer-events-none transition-all duration-700 ${hintVisible ? 'opacity-90' : 'opacity-0 translate-y-2'}`}>
-        <div className="bg-black/60 backdrop-blur-lg px-10 py-4 rounded-full border border-white/10 shadow-2xl">
+      <div className={`absolute bottom-20 left-1/2 -translate-x-1/2 z-30 pointer-events-none transition-all duration-700 ${hintVisible ? 'opacity-90' : 'opacity-0 translate-y-2'} w-[90%] max-w-md mx-auto`}>
+        <div className="bg-black/60 backdrop-blur-lg px-6 py-4 rounded-3xl border border-white/10 shadow-2xl flex justify-center">
            <span 
-             className="text-white text-lg font-bold tracking-widest text-center block whitespace-nowrap drop-shadow-lg"
+             className="text-white text-lg font-bold tracking-widest text-center block whitespace-normal break-words drop-shadow-lg leading-relaxed"
              style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}
            >
              {hintText}
@@ -720,15 +836,42 @@ const HandAR: React.FC = () => {
         </div>
       </div>
       
-      <div className="absolute top-0 right-0 p-6 z-20 pointer-events-none">
-        <button onClick={() => setShowAssetPanel(true)} className="bg-black/40 p-4 rounded-2xl border border-white/10 text-teal-400 pointer-events-auto hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md">
-            <Settings2 />
-        </button>
+      <div className="absolute top-0 right-0 p-6 z-20 pointer-events-auto flex flex-col items-end gap-2">
+        <div className="flex gap-2">
+            <button 
+              onClick={() => setIsMirrored(!isMirrored)}
+              className={`bg-black/40 p-4 rounded-2xl border border-white/10 hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md flex items-center justify-center ${isMirrored ? 'text-teal-400' : 'text-zinc-400'}`}
+            >
+                <FlipHorizontal className="w-6 h-6" />
+            </button>
+
+            <button 
+              onClick={() => setShowCameraDropdown(!showCameraDropdown)} 
+              className="bg-black/40 p-4 rounded-2xl border border-white/10 text-teal-400 hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md flex items-center gap-2"
+            >
+                <CameraIcon className="w-6 h-6" />
+                <ChevronDown className={`w-4 h-4 transition-transform ${showCameraDropdown ? 'rotate-180' : ''}`} />
+            </button>
+        </div>
+        
+        {showCameraDropdown && (
+          <div className="bg-zinc-900 border border-white/10 rounded-xl overflow-hidden shadow-2xl flex flex-col min-w-[200px]">
+            {devices.map((device, index) => (
+              <button 
+                key={device.deviceId} 
+                onClick={() => switchCamera(device.deviceId)}
+                className={`p-4 text-left text-sm hover:bg-white/10 transition-colors ${selectedDeviceId === device.deviceId ? 'text-teal-400 font-bold' : 'text-zinc-400'}`}
+              >
+                {device.label || `Camera ${index + 1}`}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
+      <div className="absolute bottom-4 left-4 z-50 pointer-events-none">
         <span 
-          className="text-white text-sm font-bold tracking-widest uppercase opacity-40"
+          className="text-black/30 text-[10px] font-mono font-bold tracking-widest uppercase"
           style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}
         >
           {APP_VERSION}
@@ -739,35 +882,6 @@ const HandAR: React.FC = () => {
         <div className="absolute inset-0 z-[100] bg-black flex flex-col items-center justify-center text-teal-400 font-mono tracking-[0.5em] animate-pulse">
           <RefreshCw className="animate-spin mb-4" /> 
           <span className="text-center px-10 uppercase">{errorMsg ? `ERROR: ${errorMsg}` : "Synchronizing Reality..."}</span>
-        </div>
-      )}
-
-      {showAssetPanel && (
-        <div className="absolute inset-0 z-40 bg-black/95 backdrop-blur-3xl flex items-center justify-center p-8 animate-in fade-in duration-300" onClick={() => setShowAssetPanel(false)}>
-          <div className="bg-zinc-900 border border-white/10 w-full max-w-[1000px] rounded-[2.5rem] flex flex-col h-[80vh] overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="p-8 border-b border-white/5 flex justify-between items-center shrink-0">
-              <h2 className="text-white font-black uppercase tracking-widest flex items-center gap-4"><Sparkles className="text-teal-400" /> SPECIES DNA</h2>
-              <button onClick={() => setShowAssetPanel(false)} className="bg-zinc-800 p-2 rounded-full text-zinc-400 hover:text-white transition-colors"><X /></button>
-            </div>
-            <div className="flex-1 p-10 overflow-y-auto">
-                <div className="grid gap-4">
-                    {customCreatures.map(c => (
-                        <div key={c.id} className="p-6 rounded-[2rem] flex items-center justify-between border bg-white/5 border-white/5">
-                           <div className="flex flex-col">
-                              <span className="text-white font-black text-sm uppercase tracking-wider">{c.name}</span>
-                              <span className="text-white/20 font-mono text-[9px] uppercase tracking-widest">{c.id}</span>
-                           </div>
-                           <div className="flex items-center gap-4">
-                             <span className={`px-3 py-1 rounded-full text-[8px] font-black uppercase ${c.category === 'bird' ? 'bg-teal-500/10 text-teal-400' : 'bg-purple-500/10 text-purple-400'}`}>
-                                {c.category}
-                             </span>
-                             <button onClick={() => deleteBirdFromDB(c.id).then(() => getAllBirdsFromDB()).then(l => { setCustomCreatures(l); customCreaturesRef.current = l; })} className="p-4 text-zinc-500 hover:text-rose-400"><Trash2 className="w-5 h-5"/></button>
-                           </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-          </div>
         </div>
       )}
     </div>
