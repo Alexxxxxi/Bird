@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.0";
+const APP_VERSION = "2.4";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -71,7 +71,28 @@ interface ActiveStar {
   scale: number;
   rotation: number;
   opacity: number;
+  heldByHandId?: string;
 }
+
+interface ActiveParticle {
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+  speed: number;
+  opacity: number;
+  size: number;
+}
+
+const isGestureC = (landmarks: any[]) => {
+   if (!landmarks || landmarks.length < 21) return false;
+   // Distance between Wrist(0) and Middle Finger MCP(9) as palm size reference
+   const palmSize = Math.hypot(landmarks[0].x - landmarks[9].x, landmarks[0].y - landmarks[9].y);
+   // Distance between Thumb Tip(4) and Index Tip(8)
+   const tipDist = Math.hypot(landmarks[4].x - landmarks[8].x, landmarks[4].y - landmarks[8].y);
+   // "C" gesture criteria: tip distance between 0.3 and 0.8 times palm size
+   return tipDist > palmSize * 0.3 && tipDist < palmSize * 0.8;
+};
 
 const preloadImage = (url: string) => {
   const img = new Image();
@@ -139,6 +160,7 @@ const HandAR: React.FC = () => {
   const creaturesRef = useRef<any[]>([]);
   const activeLeaves = useRef<ActiveLeaf[]>([]);
   const activeStars = useRef<ActiveStar[]>([]);
+  const activeParticles = useRef<ActiveParticle[]>([]);
   const limbStatesRef = useRef<Map<string, LimbStateData>>(new Map());
   const faceMeshRef = useRef<any>(null);
   const handsRef = useRef<any>(null);
@@ -206,18 +228,18 @@ const HandAR: React.FC = () => {
       const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
       ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.drawImage(video, ox, oy, dw, dh); ctx.restore();
 
-      // --- Update & Draw Global Leaves ---
+      // ==========================================
+      // --- 1. Update & Draw Leaves (叶子逻辑) ---
+      // ==========================================
       activeLeaves.current = activeLeaves.current.filter(leaf => {
-        // A. Limb tracking
         const tracker = limbStatesRef.current.get(leaf.anchorId);
         if (tracker && tracker.missingFrames < 30) {
           leaf.x = tracker.centroid.x + leaf.offsetX;
           leaf.y = tracker.centroid.y + leaf.offsetY;
         } else {
-          leaf.opacity -= 0.02; // Fade out if limb tracking lost
+          leaf.opacity -= 0.02;
         }
 
-        // B. Interactive hand erasing (Trigger Stars)
         if (handsRef.current && !leaf.isTransforming) {
           ['Hand_0', 'Hand_1'].forEach(handId => {
             const handTracker = limbStatesRef.current.get(handId);
@@ -225,35 +247,54 @@ const HandAR: React.FC = () => {
               const dist = Math.hypot(leaf.x - handTracker.centroid.x, leaf.y - handTracker.centroid.y);
               if (dist < 50) { 
                 leaf.isTransforming = true;
-                
-                const starImg = new Image();
-                starImg.src = STAR_ASSETS[Math.floor(Math.random() * STAR_ASSETS.length)];
-                
-                activeStars.current.push({
-                  id: Math.random().toString(36),
-                  img: starImg,
-                  x: leaf.x,
-                  y: leaf.y,
-                  scale: 0.5, 
-                  rotation: Math.random() * Math.PI * 0.5,
-                  opacity: 0.0
-                });
               }
             }
           });
         }
 
-        // C. Transformation Animation
         if (leaf.isTransforming) {
           leaf.opacity -= 0.05;
-          leaf.scale *= 0.95;
-          if (leaf.opacity <= 0) return false;
+          leaf.scale *= 0.92;
+          
+          if (leaf.opacity <= 0) {
+            const isCrowded = activeStars.current.some(star => {
+                return Math.hypot(star.x - leaf.x, star.y - leaf.y) < 60;
+            });
+
+            if (!isCrowded) {
+              const starImg = new Image();
+              starImg.src = STAR_ASSETS[Math.floor(Math.random() * STAR_ASSETS.length)];
+              
+              activeStars.current.push({
+                id: Math.random().toString(36),
+                img: starImg,
+                x: leaf.x,
+                y: leaf.y,
+                scale: 0.1, 
+                rotation: Math.random() * Math.PI * 0.5,
+                opacity: 0.0
+              });
+
+              for (let i = 0; i < 20; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const startDist = 60 + Math.random() * 60; 
+                activeParticles.current.push({
+                  x: leaf.x + Math.cos(angle) * startDist,
+                  y: leaf.y + Math.sin(angle) * startDist,
+                  tx: leaf.x,
+                  ty: leaf.y,
+                  speed: 0.03 + Math.random() * 0.03,
+                  opacity: 1.0,
+                  size: 1.5 + Math.random() * 2.0
+                });
+              }
+            }
+            return false;
+          }
         } else {
-          // Natural fade in
           if (leaf.opacity < 1 && leaf.opacity > -0.2) leaf.opacity += 0.06;
         }
 
-        // D. Render leaf
         if (leaf.img.complete && leaf.img.naturalWidth > 0 && leaf.opacity > 0) {
           ctx.save();
           ctx.globalAlpha = Math.min(leaf.opacity, 1);
@@ -267,16 +308,118 @@ const HandAR: React.FC = () => {
         return leaf.opacity > 0;
       });
 
-      // --- Update & Draw Stars ---
-      activeStars.current = activeStars.current.filter(star => {
-        // Aesthetic slow growth and floating
-        star.scale += 0.005; 
-        star.y -= 0.5; 
+      // ==========================================
+      // --- 2. Update & Draw Particles (黄金粒子) ---
+      // ==========================================
+      activeParticles.current = activeParticles.current.filter(p => {
+        p.x += (p.tx - p.x) * p.speed;
+        p.y += (p.ty - p.y) * p.speed;
         
-        if (star.scale < 0.8) {
-          star.opacity += 0.05; // Fade in
-        } else if (star.scale > 1.2) {
-          star.opacity -= 0.01; // Fade out slowly
+        const distToCenter = Math.hypot(p.tx - p.x, p.ty - p.y);
+        
+        if (distToCenter < 20) {
+          p.size *= 0.85;
+          p.opacity -= 0.1;
+        } else {
+          p.size *= 0.99;
+        }
+
+        if (p.opacity > 0 && p.size > 0.1) {
+          ctx.save();
+          ctx.globalAlpha = p.opacity;
+          ctx.fillStyle = '#FFD700'; 
+          ctx.shadowColor = '#FFFACD';
+          ctx.shadowBlur = 4;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          return true;
+        }
+        return false;
+      });
+
+      // ==========================================
+      // --- ★ Hand Gesture "C" Logic ---
+      // ==========================================
+      if (handsRef.current) {
+          ['Hand_0', 'Hand_1'].forEach(handId => {
+              const tracker = limbStatesRef.current.get(handId);
+              if (tracker && tracker.missingFrames < 5 && tracker.rawPoints.palm) {
+                  const palm = tracker.rawPoints.palm;
+                  const landmarks = tracker.rawPoints.fullLandmarks;
+                  const isC = isGestureC(landmarks);
+                  
+                  const heldStar = activeStars.current.find(s => s.heldByHandId === handId);
+                  
+                  if (isC) {
+                      if (!heldStar) {
+                          const starImg = new Image();
+                          starImg.src = STAR_ASSETS[Math.floor(Math.random() * STAR_ASSETS.length)];
+                          activeStars.current.push({
+                              id: Math.random().toString(36),
+                              img: starImg,
+                              x: palm.x,
+                              y: palm.y,
+                              scale: 0.05,
+                              rotation: 0,
+                              opacity: 0,
+                              heldByHandId: handId
+                          });
+                          for (let i = 0; i < 15; i++) {
+                              const angle = Math.random() * Math.PI * 2;
+                              const startDist = 50 + Math.random() * 30;
+                              activeParticles.current.push({
+                                  x: palm.x + Math.cos(angle) * startDist,
+                                  y: palm.y + Math.sin(angle) * startDist,
+                                  tx: palm.x, 
+                                  ty: palm.y,
+                                  speed: 0.15,
+                                  opacity: 1.0,
+                                  size: 2.0 + Math.random() * 2.0
+                              });
+                          }
+                      } else {
+                          heldStar.x = palm.x;
+                          heldStar.y = palm.y;
+                      }
+                  } else {
+                      if (heldStar) heldStar.heldByHandId = undefined;
+                  }
+              }
+          });
+      }
+
+      // ==========================================
+      // --- 3. Update & Draw Stars (逻辑升级) ---
+      // ==========================================
+      activeStars.current = activeStars.current.filter(star => {
+        if (star.heldByHandId) {
+            if (star.scale < 0.8) star.scale += 0.02;
+            if (star.opacity < 1.0) star.opacity += 0.05;
+            
+            if (star.img.complete && star.img.naturalWidth > 0) {
+                ctx.save();
+                ctx.globalAlpha = star.opacity;
+                ctx.translate(star.x, star.y);
+                star.rotation += 0.02; 
+                ctx.rotate(star.rotation);
+                const s = 120 * star.scale; 
+                ctx.drawImage(star.img, -s/2, -s/2, s, s);
+                ctx.restore();
+            }
+            return true;
+        }
+
+        star.scale += 0.006; 
+        star.y -= 0.4; 
+        
+        if (star.scale < 1.0) {
+          if (star.scale > 0.2) {
+            star.opacity += 0.03; 
+          }
+        } else if (star.scale > 1.5) {
+          star.opacity -= 0.01; 
         }
         
         if (star.opacity > 1) star.opacity = 1;
@@ -289,9 +432,9 @@ const HandAR: React.FC = () => {
           const s = 120 * star.scale; 
           ctx.drawImage(star.img, -s/2, -s/2, s, s);
           ctx.restore();
-          return true;
         }
-        return star.opacity > 0;
+        
+        return star.opacity > 0 || star.scale < 1.0; 
       });
 
       creaturesRef.current = creaturesRef.current.filter(c => {
@@ -324,7 +467,6 @@ const HandAR: React.FC = () => {
           c.state = CreatureState.FLYING_AWAY;
         }
 
-        // NaN protection
         if (targetPoint && (isNaN(targetPoint.x) || isNaN(targetPoint.y))) {
           targetPoint = null;
         }
@@ -434,7 +576,7 @@ const HandAR: React.FC = () => {
       const pxLandmarks = landmarks.map(toPx);
       const palm = pxLandmarks[9];
       const hull = getUpperHandHull(pxLandmarks);
-      updateLimbState(handId, palm, { palm, hull }, 'Hand');
+      updateLimbState(handId, palm, { palm, hull, fullLandmarks: pxLandmarks }, 'Hand');
       if (isFist(landmarks)) {
         creaturesRef.current.forEach(c => { 
             if (c.targetId === handId && c.state !== CreatureState.FLYING_AWAY) c.state = CreatureState.FLYING_AWAY; 
@@ -506,13 +648,11 @@ const HandAR: React.FC = () => {
           handsRef.current = hands;
         }
 
-        // FORCE SYNC: Ensure hardcoded presets overwrite DB in background
         for (const p of PRESET_BIRDS) {
           await deleteBirdFromDB(p.id);
           await saveBirdToDB(p);
         }
         
-        // Trust constants for immediate load
         const loadedCreatures = PRESET_BIRDS;
         customCreaturesRef.current = loadedCreatures;
         setCustomCreatures(loadedCreatures);
