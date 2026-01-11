@@ -11,6 +11,8 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
+const APP_VERSION = "1.0";
+
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
   "快来和你的新朋友们打个招呼..."
@@ -416,6 +418,16 @@ const HandAR: React.FC = () => {
         <button onClick={() => setShowAssetPanel(true)} className="bg-black/40 p-4 rounded-2xl border border-white/10 text-teal-400 pointer-events-auto hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md">
             <Settings2 />
         </button>
+      </div>
+
+      {/* Version number in the exact center */}
+      <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
+        <span 
+          className="text-white text-sm font-bold tracking-widest uppercase opacity-40"
+          style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}
+        >
+          {APP_VERSION}
+        </span>
       </div>
 
       {isLoading && (
