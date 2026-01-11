@@ -141,14 +141,14 @@ export class Butterfly implements CreatureEntity {
       this.opacity = 1.0;
       let shouldFollow = false;
       
+      // Increased tolerance threshold to 300,000 for butterflies
       if (perchTarget && !isNaN(perchTarget.x) && !isNaN(perchTarget.y)) {
          const distSq = Math.pow(perchTarget.x - this.x, 2) + Math.pow(perchTarget.y - this.y, 2);
-         // Butterfly gets even larger tolerance (approx 550px)
          if (distSq < 300000) {
             shouldFollow = true;
          }
       }
-      
+
       if (shouldFollow && perchTarget) {
         this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
         this.y = this.y + (perchTarget.y - this.y) * (smoothFactor * 16);
