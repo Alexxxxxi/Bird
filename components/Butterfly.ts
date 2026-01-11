@@ -141,17 +141,20 @@ export class Butterfly implements CreatureEntity {
       this.opacity = 1.0;
       let shouldFollow = false;
       
-      // Increased tolerance threshold to 300,000 for butterflies
       if (perchTarget && !isNaN(perchTarget.x) && !isNaN(perchTarget.y)) {
          const distSq = Math.pow(perchTarget.x - this.x, 2) + Math.pow(perchTarget.y - this.y, 2);
+         // Broad tolerance for mobile jitter: 300,000 (~550px)
          if (distSq < 300000) {
             shouldFollow = true;
          }
       }
 
       if (shouldFollow && perchTarget) {
-        this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
-        this.y = this.y + (perchTarget.y - this.y) * (smoothFactor * 16);
+        // Fix: clamp follow coefficient to 0.8 max
+        const followFactor = Math.min(smoothFactor * 16, 0.8);
+        
+        this.x = this.x + (perchTarget.x - this.x) * followFactor;
+        this.y = this.y + (perchTarget.y - this.y) * followFactor;
       } else {
         this.velocityX = 0;
         this.velocityY = 0;

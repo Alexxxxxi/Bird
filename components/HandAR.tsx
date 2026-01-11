@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "1.4";
+const APP_VERSION = "1.5";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",

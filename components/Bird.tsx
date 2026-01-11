@@ -151,9 +151,10 @@ export class Bird implements CreatureEntity {
       this.opacity = 1.0;
       let shouldFollow = false;
       
-      // Increased jitter tolerance threshold to 250,000 (~500px)
+      // Basic check: ensure target exists and coordinates are valid
       if (perchTarget && !isNaN(perchTarget.x) && !isNaN(perchTarget.y)) {
          const distSq = Math.pow(perchTarget.x - this.x, 2) + Math.pow(perchTarget.y - this.y, 2);
+         // Broad tolerance for mobile jitter: 250,000 (~500px)
          if (distSq < 250000) { 
             shouldFollow = true;
          }
@@ -161,8 +162,12 @@ export class Bird implements CreatureEntity {
 
       if (shouldFollow && perchTarget) {
         const targetY = perchTarget.y - (this.size * this.depthScale * 0.35);
-        this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
-        this.y = this.y + (targetY - this.y) * (smoothFactor * 16);
+        
+        // Fix: clamp follow coefficient to 0.8 max to prevent overshooting oscillation
+        const followFactor = Math.min(smoothFactor * 16, 0.8);
+        
+        this.x = this.x + (perchTarget.x - this.x) * followFactor;
+        this.y = this.y + (targetY - this.y) * followFactor;
       } else {
         this.velocityX = 0;
         this.velocityY = 0;
