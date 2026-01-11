@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Bird } from './Bird';
 import { Butterfly } from './Butterfly';
@@ -341,7 +342,7 @@ const HandAR: React.FC = () => {
           handsRef.current = hands;
         }
 
-        // Force-sync presets from constants into IndexedDB to ensure configuration updates are applied
+        // Force-sync presets from constants into IndexedDB every time to ensure stale configurations are overwritten.
         for (const p of PRESET_BIRDS) {
           await saveBirdToDB(p);
         }

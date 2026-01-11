@@ -147,12 +147,16 @@ export class Bird implements CreatureEntity {
         this.nextHopTime = this.actionTimer + 1500 + Math.random() * 3000;
       }
     } 
-    else if (this.state === CreatureState.PERCHED && perchTarget) {
+    else if (this.state === CreatureState.PERCHED) {
       this.opacity = 1.0;
-      const targetY = perchTarget.y - (this.size * this.depthScale * 0.35);
-      this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
-      this.y = this.y + (targetY - this.y) * (smoothFactor * 16);
+      if (perchTarget) {
+        const targetY = perchTarget.y - (this.size * this.depthScale * 0.35);
+        this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
+        this.y = this.y + (targetY - this.y) * (smoothFactor * 16);
+      }
       this.velocityX = 0;
+      this.velocityY = 0;
+      
       if (!this.isHopping && this.actionTimer > this.nextHopTime) {
         this.isHopping = true;
         this.hopProgress = 0;
