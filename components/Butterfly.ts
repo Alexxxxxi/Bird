@@ -140,12 +140,12 @@ export class Butterfly implements CreatureEntity {
     else if (this.state === CreatureState.PERCHED) {
       this.opacity = 1.0;
       
-      // Strengthened stability: Anti-teleportation logic
+      // Strengthened stability: Anti-teleportation & NaN protection
       let isValidTarget = false;
-      if (perchTarget) {
+      if (perchTarget && !isNaN(perchTarget.x) && !isNaN(perchTarget.y)) {
          const distSq = Math.pow(perchTarget.x - this.x, 2) + Math.pow(perchTarget.y - this.y, 2);
-         // Butterflies have slightly larger tolerance than birds due to flutter nature
-         if (distSq < 15000 || this.actionTimer < 500) {
+         // 25000 (approx 150px) jitter threshold
+         if (distSq < 25000 || this.actionTimer < 500) {
             isValidTarget = true;
          }
       }

@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "1.1";
+const APP_VERSION = "1.2";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -171,6 +171,11 @@ const HandAR: React.FC = () => {
           }
         } else if (state && state.missingFrames > 150 && c.state !== CreatureState.FLYING_AWAY) {
           c.state = CreatureState.FLYING_AWAY;
+        }
+
+        // NaN protection
+        if (targetPoint && (isNaN(targetPoint.x) || isNaN(targetPoint.y))) {
+          targetPoint = null;
         }
         
         c.update(dt, targetPoint, creaturesRef.current, depthScale);
@@ -343,14 +348,16 @@ const HandAR: React.FC = () => {
           handsRef.current = hands;
         }
 
-        // FORCE SYNC: Enhanced database synchronization to ensure hardcoded presets overwrite IndexedDB completely
+        // FORCE SYNC: Ensure hardcoded presets overwrite DB in background
         for (const p of PRESET_BIRDS) {
-          await deleteBirdFromDB(p.id); // Clear potential legacy data
-          await saveBirdToDB(p);        // Apply current hardcoded config
+          await deleteBirdFromDB(p.id);
+          await saveBirdToDB(p);
         }
         
-        customCreaturesRef.current = await getAllBirdsFromDB();
-        setCustomCreatures(customCreaturesRef.current);
+        // Critical FIX: Trust constants for immediate load instead of DB wait to prevent legacy data delay
+        const loadedCreatures = PRESET_BIRDS;
+        customCreaturesRef.current = loadedCreatures;
+        setCustomCreatures(loadedCreatures);
         setIsLoading(false);
       } catch (e: any) {
         if (!ignore) { setErrorMsg(e.message); setIsLoading(false); }
@@ -421,7 +428,6 @@ const HandAR: React.FC = () => {
         </button>
       </div>
 
-      {/* Center-aligned Version Display with Microsoft YaHei font */}
       <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none">
         <span 
           className="text-white text-sm font-bold tracking-widest uppercase opacity-40"
