@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "1.5";
+const APP_VERSION = "1.6";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -315,7 +315,9 @@ const HandAR: React.FC = () => {
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand%20V3.png",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Butterfly%20V2.gif",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/LOGO.png"
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/LOGO.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird2_fly.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird2_stand.png"
         ];
         ASSETS_TO_PRELOAD.forEach(url => preloadImage(url));
 
