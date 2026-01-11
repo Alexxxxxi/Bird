@@ -305,7 +305,7 @@ const HandAR: React.FC = () => {
 
         const ASSETS_TO_PRELOAD = [
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/_1-ezgif.com-gif-to-sprite-converter.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand%20V2.png",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/butterfly.png",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/LOGO.png"
