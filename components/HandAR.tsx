@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.16"; 
+const APP_VERSION = "2.20"; 
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -174,6 +174,10 @@ const HandAR: React.FC = () => {
   const globalFaceWidthRef = useRef<number>(240);
   const lastSpawnTimesRef = useRef<Map<string, number>>(new Map());
 
+  // Mediapipe processing lock
+  const isFaceProcessing = useRef(false);
+  const isHandProcessing = useRef(false);
+
   useEffect(() => {
     isMirroredRef.current = isMirrored;
   }, [isMirrored]);
@@ -223,9 +227,12 @@ const HandAR: React.FC = () => {
     const getCameras = async () => {
       try {
         await navigator.mediaDevices.getUserMedia({ video: true });
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        const allDevices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = allDevices.filter(device => device.kind === 'videoinput');
         setDevices(videoDevices);
+        if (videoDevices.length > 0 && !selectedDeviceId) {
+           setSelectedDeviceId(videoDevices[0].deviceId);
+        }
       } catch (err) {
         console.error("Error accessing media devices.", err);
       }
@@ -233,38 +240,95 @@ const HandAR: React.FC = () => {
     getCameras();
   }, []);
 
-  const switchCamera = async (deviceId: string) => {
+  const switchCamera = (deviceId: string) => {
       setSelectedDeviceId(deviceId);
       setShowCameraDropdown(false);
+  };
+
+  useEffect(() => {
+    if (!selectedDeviceId) return;
+    let active = true;
+
+    const startCamera = async () => {
       setIsLoading(true);
+      setErrorMsg(null);
+      try {
+        if (cameraRef.current) {
+          try { await cameraRef.current.stop(); } catch(e) {}
+        }
+        
+        await Promise.all([
+          loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"),
+          loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"),
+          loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js")
+        ]);
 
-      if (cameraRef.current) {
-          await cameraRef.current.stop();
-      }
-
-      if (videoRef.current && window.Camera) {
+        if (videoRef.current && window.Camera) {
           cameraRef.current = new window.Camera(videoRef.current, {
             onFrame: async () => {
-              if (!videoRef.current) return;
-              if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoRef.current });
-              if (handsRef.current) await handsRef.current.send({ image: videoRef.current });
+              const video = videoRef.current;
+              if (!video || !active || video.readyState < 2) return;
+              
+              // Run MediaPipe solutions with locks to prevent overlapped calls (Aborted error fix)
+              if (faceMeshRef.current && !isFaceProcessing.current) {
+                isFaceProcessing.current = true;
+                try {
+                  await faceMeshRef.current.send({ image: video });
+                } catch (e) {
+                  console.warn("FaceMesh send error:", e);
+                } finally {
+                  isFaceProcessing.current = false;
+                }
+              }
+
+              if (handsRef.current && !isHandProcessing.current) {
+                isHandProcessing.current = true;
+                try {
+                  await handsRef.current.send({ image: video });
+                } catch (e) {
+                  console.warn("Hands send error:", e);
+                } finally {
+                  isHandProcessing.current = false;
+                }
+              }
             },
             width: 1280, height: 720,
-            deviceId: deviceId
+            deviceId: selectedDeviceId
           });
+
           await cameraRef.current.start();
+          if (active) setIsLoading(false);
+        }
+      } catch (e: any) {
+        if (active) {
+          setErrorMsg(e.message);
           setIsLoading(false);
+        }
       }
-  };
+    };
+
+    startCamera();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedDeviceId]);
 
   useEffect(() => {
     let frameId: number;
     let lastTime = performance.now();
     const render = (time: number) => {
-      const dt = Math.min(time - lastTime, 100); 
+      const dt = Math.max(Math.min(time - lastTime, 100), 1); 
       lastTime = time;
+      
+      // Calculate time compensation factor (dt / 16.0) for frame-rate independence
+      const timeScale = dt / 16.0;
+
       const canvas = canvasRef.current; const ctx = canvas?.getContext('2d'); const video = videoRef.current;
-      if (!canvas || !ctx || !video || video.readyState < 2) { frameId = requestAnimationFrame(render); return; }
+      if (!canvas || !ctx || !video || video.readyState < 2 || video.videoWidth === 0) { 
+        frameId = requestAnimationFrame(render); return; 
+      }
+      
       if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
         canvas.width = window.innerWidth; canvas.height = window.innerHeight;
       }
@@ -298,7 +362,7 @@ const HandAR: React.FC = () => {
           leaf.x = tracker.centroid.x + leaf.offsetX;
           leaf.y = tracker.centroid.y + leaf.offsetY;
         } else {
-          leaf.opacity -= 0.02; 
+          leaf.opacity -= 0.02 * timeScale; 
         }
 
         if (handsRef.current && !leaf.isTransforming) {
@@ -314,8 +378,8 @@ const HandAR: React.FC = () => {
         }
 
         if (leaf.isTransforming) {
-          leaf.opacity -= 0.05;
-          leaf.scale *= 0.92;
+          leaf.opacity -= 0.05 * timeScale;
+          leaf.scale *= Math.pow(0.92, timeScale);
           
           if (leaf.opacity <= 0) {
             const isCrowded = activeStars.current.some(star => {
@@ -353,7 +417,7 @@ const HandAR: React.FC = () => {
             return false;
           }
         } else {
-          if (leaf.opacity < 1 && leaf.opacity > -0.2) leaf.opacity += 0.06;
+          if (leaf.opacity < 1 && leaf.opacity > -0.2) leaf.opacity += 0.06 * timeScale;
         }
 
         if (leaf.img.complete && leaf.img.naturalWidth > 0 && leaf.opacity > 0) {
@@ -370,21 +434,21 @@ const HandAR: React.FC = () => {
       });
 
       activeParticles.current = activeParticles.current.filter(p => {
-        p.x += (p.tx - p.x) * p.speed;
-        p.y += (p.ty - p.y) * p.speed;
+        p.x += (p.tx - p.x) * p.speed * timeScale;
+        p.y += (p.ty - p.y) * p.speed * timeScale;
         
         const distToCenter = Math.hypot(p.tx - p.x, p.ty - p.y);
         
         if (distToCenter < 20) {
-          p.size *= 0.85;
-          p.opacity -= 0.1;
+          p.size *= Math.pow(0.85, timeScale);
+          p.opacity -= 0.1 * timeScale;
         } else {
-          p.size *= 0.99;
+          p.size *= Math.pow(0.99, timeScale);
         }
 
         if (p.opacity > 0 && p.size > 0.1) {
           ctx.save();
-          ctx.globalAlpha = p.opacity;
+          ctx.globalAlpha = Math.max(0, p.opacity);
           ctx.fillStyle = '#FFD700'; 
           ctx.shadowColor = '#FFFACD';
           ctx.shadowBlur = 4;
@@ -482,14 +546,14 @@ const HandAR: React.FC = () => {
             }
 
             if (!star.isFadingOut) {
-                if (star.scale < 0.8) star.scale += 0.02; 
-                if (star.opacity < 1.0) star.opacity += 0.05; 
+                if (star.scale < 0.8) star.scale += 0.02 * timeScale; 
+                if (star.opacity < 1.0) star.opacity += 0.05 * timeScale; 
                 
                 if (star.scale >= 0.8 && star.opacity >= 1.0) {
                     star.isFadingOut = true; 
                 }
             } else {
-                star.opacity -= 0.03; 
+                star.opacity -= 0.03 * timeScale; 
                 if (star.opacity <= 0) {
                     return false; 
                 }
@@ -506,22 +570,22 @@ const HandAR: React.FC = () => {
             return true;
         }
 
-        star.scale += 0.006; 
-        star.y -= 0.4; 
+        star.scale += 0.006 * timeScale; 
+        star.y -= 0.4 * timeScale; 
         
         if (star.scale < 1.0) {
           if (star.scale > 0.2) {
-            star.opacity += 0.03; 
+            star.opacity += 0.03 * timeScale; 
           }
         } else if (star.scale > 1.5) {
-          star.opacity -= 0.01; 
+          star.opacity -= 0.01 * timeScale; 
         }
         
         if (star.opacity > 1) star.opacity = 1;
 
         if (star.img.complete && star.img.naturalWidth > 0 && star.opacity > 0) {
           ctx.save();
-          ctx.globalAlpha = star.opacity;
+          ctx.globalAlpha = Math.max(0, star.opacity);
           ctx.translate(star.x, star.y);
           ctx.rotate(star.rotation);
           const s = 120 * star.scale; 
@@ -602,7 +666,7 @@ const HandAR: React.FC = () => {
   onFaceResultsRef.current = (results: any) => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || !results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+    if (!video || !canvas || video.videoWidth === 0 || !results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
       setAnySmile(false); isFaceVisibleRef.current = false; 
       creaturesRef.current = [];
       activeLeaves.current = [];
@@ -617,6 +681,7 @@ const HandAR: React.FC = () => {
     const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
     
     const toPx = (l: any) => {
+        if (!l) return { x: 0, y: 0 };
         const x = isMirroredRef.current ? (1.0 - l.x) : l.x;
         return { x: x * dw + ox, y: l.y * dh + oy };
     };
@@ -628,7 +693,7 @@ const HandAR: React.FC = () => {
 
     const headId = `Primary_Head`;
     const mouthL = toPx(landmarks[61]), mouthR = toPx(landmarks[291]);
-    const isSmiling = (getDistance(mouthL, mouthR) / faceWidth) > 0.35;
+    const isSmiling = (getDistance(mouthL, mouthR) / (faceWidth || 1)) > 0.35;
     
     if (isSmiling !== anySmile) setAnySmile(isSmiling);
 
@@ -678,17 +743,19 @@ const HandAR: React.FC = () => {
   onHandResultsRef.current = (results: any) => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || !results.multiHandLandmarks) return;
+    if (!video || !canvas || video.videoWidth === 0 || !results.multiHandLandmarks) return;
     const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
     const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
     const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
     
     const toPx = (l: any) => {
+        if (!l) return { x: 0, y: 0 };
         const x = isMirroredRef.current ? (1.0 - l.x) : l.x;
         return { x: x * dw + ox, y: l.y * dh + oy };
     };
 
     results.multiHandLandmarks.forEach((landmarks: any, index: number) => {
+      if (!landmarks) return;
       const handId = `Hand_${index}`;
       const pxLandmarks = landmarks.map(toPx);
       const palm = pxLandmarks[9];
@@ -703,6 +770,7 @@ const HandAR: React.FC = () => {
   };
 
   function updateLimbState(label: string, nCentroid: {x: number, y: number}, rawPoints: any, category: string) {
+    if (!nCentroid) return;
     if (!limbStatesRef.current.has(label)) limbStatesRef.current.set(label, createInitialLimbState());
     const s = limbStatesRef.current.get(label)!;
     const diff = Math.max(0, getDistance(s.centroid, nCentroid) - MOVEMENT_DEADZONE);
@@ -713,45 +781,17 @@ const HandAR: React.FC = () => {
     s.centroid = nCentroid; s.rawPoints = rawPoints; s.missingFrames = 0;
   }
 
+  // Initial models setup
   useEffect(() => {
     let ignore = false;
-    const init = async () => {
+    const initModels = async () => {
       try {
-        if (ignore) return;
-        setIsLoading(true);
+        await Promise.all([
+          loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"),
+          loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"),
+          loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js")
+        ]);
 
-        const ASSETS_TO_PRELOAD = [
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/_1-ezgif.com-gif-to-sprite-converter.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand%20V3.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Butterfly%20V2.gif",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/LOGO.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird2_fly.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird2_stand.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%201.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%202.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%203.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%204.png",
-          ...STAR_ASSETS
-        ];
-        ASSETS_TO_PRELOAD.forEach(url => preloadImage(url));
-
-        const cameraScriptPromise = loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js");
-        const faceScriptPromise = loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js");
-        const handScriptPromise = loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js");
-        await cameraScriptPromise;
-        if (videoRef.current && window.Camera) {
-          cameraRef.current = new window.Camera(videoRef.current, {
-            onFrame: async () => {
-              if (!videoRef.current || ignore) return;
-              if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoRef.current });
-              if (handsRef.current) await handsRef.current.send({ image: videoRef.current });
-            },
-            width: 1280, height: 720
-          });
-          await cameraRef.current.start();
-        }
-        await Promise.all([faceScriptPromise, handScriptPromise]);
         if (window.FaceMesh) {
           const faceMesh = new window.FaceMesh({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
           faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
@@ -773,24 +813,26 @@ const HandAR: React.FC = () => {
         const loadedCreatures = PRESET_BIRDS;
         customCreaturesRef.current = loadedCreatures;
         setCustomCreatures(loadedCreatures);
-        setIsLoading(false);
       } catch (e: any) {
-        if (!ignore) { setErrorMsg(e.message); setIsLoading(false); }
+        if (!ignore) setErrorMsg(e.message);
       }
     };
-    init();
-    return () => { ignore = true; if (cameraRef.current) cameraRef.current.stop(); };
+    initModels();
+    return () => { ignore = true; };
   }, [spawnSpecificCreature]);
 
   useEffect(() => {
     const updateText = () => {
       setHintVisible(false);
       setTimeout(() => {
+        const hasNoCreatures = creaturesRef.current.length === 0;
         let texts = !isFaceVisibleRef.current 
           ? NO_FACE_TEXTS 
           : (anySmile 
               ? SMILING_TEXTS 
-              : (hasSmiledRef.current ? AFTER_SMILE_TEXTS : WAITING_SMILE_TEXTS));
+              : (hasNoCreatures 
+                  ? WAITING_SMILE_TEXTS 
+                  : (hasSmiledRef.current ? AFTER_SMILE_TEXTS : WAITING_SMILE_TEXTS)));
               
         setHintText(texts[Math.floor(Math.random() * texts.length)]);
         setHintVisible(true);
@@ -836,37 +878,40 @@ const HandAR: React.FC = () => {
         </div>
       </div>
       
-      <div className="absolute top-0 right-0 p-6 z-20 pointer-events-auto flex flex-col items-end gap-2">
-        <div className="flex gap-2">
-            <button 
-              onClick={() => setIsMirrored(!isMirrored)}
-              className={`bg-black/40 p-4 rounded-2xl border border-white/10 hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md flex items-center justify-center ${isMirrored ? 'text-teal-400' : 'text-zinc-400'}`}
-            >
-                <FlipHorizontal className="w-6 h-6" />
-            </button>
-
-            <button 
-              onClick={() => setShowCameraDropdown(!showCameraDropdown)} 
-              className="bg-black/40 p-4 rounded-2xl border border-white/10 text-teal-400 hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md flex items-center gap-2"
-            >
-                <CameraIcon className="w-6 h-6" />
-                <ChevronDown className={`w-4 h-4 transition-transform ${showCameraDropdown ? 'rotate-180' : ''}`} />
-            </button>
+      <div className="absolute top-0 right-0 p-6 z-20 pointer-events-auto flex flex-col items-end gap-3">
+        <div className="relative">
+          <button 
+            onClick={() => setShowCameraDropdown(!showCameraDropdown)} 
+            className={`bg-black/40 p-4 rounded-2xl border border-white/10 text-teal-400 hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md flex items-center gap-2 ${showCameraDropdown ? 'bg-white/5 border-teal-400/50' : ''}`}
+          >
+              <CameraIcon className="w-6 h-6" />
+              <ChevronDown className={`w-4 h-4 transition-transform ${showCameraDropdown ? 'rotate-180' : ''}`} />
+          </button>
+          
+          {showCameraDropdown && (
+            <div className="absolute top-full right-0 mt-3 bg-zinc-900 border border-white/10 rounded-2xl overflow-hidden shadow-2xl flex flex-col min-w-[240px] animate-in fade-in slide-in-from-top-2 duration-200 z-50">
+              {devices.length > 0 ? devices.map((device, index) => (
+                <button 
+                  key={device.deviceId || index} 
+                  onClick={() => switchCamera(device.deviceId)}
+                  className={`p-4 text-left text-sm hover:bg-teal-500/10 transition-colors border-b border-white/5 last:border-0 ${selectedDeviceId === device.deviceId ? 'text-teal-400 font-bold bg-teal-500/5' : 'text-zinc-400'}`}
+                >
+                  {device.label || `Camera ${index + 1}`}
+                </button>
+              )) : (
+                <div className="p-4 text-zinc-500 text-sm italic">No cameras found</div>
+              )}
+            </div>
+          )}
         </div>
-        
-        {showCameraDropdown && (
-          <div className="bg-zinc-900 border border-white/10 rounded-xl overflow-hidden shadow-2xl flex flex-col min-w-[200px]">
-            {devices.map((device, index) => (
-              <button 
-                key={device.deviceId} 
-                onClick={() => switchCamera(device.deviceId)}
-                className={`p-4 text-left text-sm hover:bg-white/10 transition-colors ${selectedDeviceId === device.deviceId ? 'text-teal-400 font-bold' : 'text-zinc-400'}`}
-              >
-                {device.label || `Camera ${index + 1}`}
-              </button>
-            ))}
-          </div>
-        )}
+
+        <button 
+          onClick={() => setIsMirrored(!isMirrored)}
+          className={`bg-black/40 p-4 rounded-2xl border border-white/10 hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md flex items-center justify-center ${isMirrored ? 'text-teal-400 border-teal-400/30' : 'text-zinc-400'}`}
+          title={isMirrored ? "Disable Mirror" : "Enable Mirror"}
+        >
+            <FlipHorizontal className="w-6 h-6" />
+        </button>
       </div>
 
       <div className="absolute bottom-4 left-4 z-50 pointer-events-none">
@@ -878,10 +923,18 @@ const HandAR: React.FC = () => {
         </span>
       </div>
 
-      {isLoading && (
+      {(isLoading || errorMsg) && (
         <div className="absolute inset-0 z-[100] bg-black flex flex-col items-center justify-center text-teal-400 font-mono tracking-[0.5em] animate-pulse">
           <RefreshCw className="animate-spin mb-4" /> 
           <span className="text-center px-10 uppercase">{errorMsg ? `ERROR: ${errorMsg}` : "Synchronizing Reality..."}</span>
+          {errorMsg && (
+            <button 
+              onClick={() => window.location.reload()}
+              className="mt-6 px-6 py-2 border border-teal-400 rounded-full text-xs hover:bg-teal-400 hover:text-black transition-colors"
+            >
+              RETRY CONNECTION
+            </button>
+          )}
         </div>
       )}
     </div>
