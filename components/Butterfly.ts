@@ -142,9 +142,11 @@ export class Butterfly implements CreatureEntity {
       if (perchTarget) {
         this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
         this.y = this.y + (perchTarget.y - this.y) * (smoothFactor * 16);
+      } else {
+        // Target lost: stay at current position
+        this.velocityX = 0;
+        this.velocityY = 0;
       }
-      this.velocityX = 0;
-      this.velocityY = 0;
       
       if (!this.isHopping && this.actionTimer > this.nextHopTime) { this.isHopping = true; this.hopProgress = 0; }
       if (this.isHopping) {

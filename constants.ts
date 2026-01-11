@@ -1,4 +1,3 @@
-
 import { CustomBirdConfig } from './types';
 
 export const SPECIES_CONFIG = {

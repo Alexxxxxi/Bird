@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Bird } from './Bird';
 import { Butterfly } from './Butterfly';
@@ -306,7 +305,7 @@ const HandAR: React.FC = () => {
 
         const ASSETS_TO_PRELOAD = [
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/_1-ezgif.com-gif-to-sprite-converter.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand%20V2.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand%20V3.png",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Butterfly%20V2.gif",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/LOGO.png"
@@ -342,7 +341,7 @@ const HandAR: React.FC = () => {
           handsRef.current = hands;
         }
 
-        // Force-sync presets from constants into IndexedDB every time to ensure stale configurations are overwritten.
+        // FORCE SYNC: Always overwrite database with latest hardcoded presets to ensure config updates are applied
         for (const p of PRESET_BIRDS) {
           await saveBirdToDB(p);
         }

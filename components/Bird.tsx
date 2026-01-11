@@ -153,9 +153,11 @@ export class Bird implements CreatureEntity {
         const targetY = perchTarget.y - (this.size * this.depthScale * 0.35);
         this.x = this.x + (perchTarget.x - this.x) * (smoothFactor * 16);
         this.y = this.y + (targetY - this.y) * (smoothFactor * 16);
+      } else {
+        // Target lost: Stay still at last known position
+        this.velocityX = 0;
+        this.velocityY = 0;
       }
-      this.velocityX = 0;
-      this.velocityY = 0;
       
       if (!this.isHopping && this.actionTimer > this.nextHopTime) {
         this.isHopping = true;
