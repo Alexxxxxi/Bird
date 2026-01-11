@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "1.6";
+const APP_VERSION = "2.0";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -34,6 +34,44 @@ const AFTER_SMILE_TEXTS = [
   "让我们一起，手势比个\"C\"试试呢?",
   "用手比出一个\"C\"，把希望也带进来吧..."
 ];
+
+const LEAF_ASSETS = [
+  "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%201.png",
+  "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%202.png",
+  "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%203.png",
+  "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%204.png"
+];
+
+const STAR_ASSETS = [
+  "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/star1.png",
+  "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/star2.png",
+  "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/star3.png",
+  "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/star4.png"
+];
+
+interface ActiveLeaf {
+  id: string;
+  img: HTMLImageElement;
+  anchorId: string;
+  offsetX: number;
+  offsetY: number;
+  scale: number;
+  rotation: number;
+  opacity: number;
+  x: number;
+  y: number;
+  isTransforming?: boolean;
+}
+
+interface ActiveStar {
+  id: string;
+  img: HTMLImageElement;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  opacity: number;
+}
 
 const preloadImage = (url: string) => {
   const img = new Image();
@@ -99,12 +137,37 @@ const HandAR: React.FC = () => {
   const isFaceVisibleRef = useRef(false);
 
   const creaturesRef = useRef<any[]>([]);
+  const activeLeaves = useRef<ActiveLeaf[]>([]);
+  const activeStars = useRef<ActiveStar[]>([]);
   const limbStatesRef = useRef<Map<string, LimbStateData>>(new Map());
   const faceMeshRef = useRef<any>(null);
   const handsRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
   const globalFaceWidthRef = useRef<number>(240);
   const lastSpawnTimesRef = useRef<Map<string, number>>(new Map());
+
+  // Global leaf drop callback
+  const handleLeafDrop = useCallback((x: number, y: number, targetId: string, depthScale: number) => {
+    const tracker = limbStatesRef.current.get(targetId);
+    if (!tracker) return;
+
+    const anchor = tracker.centroid;
+    const img = new Image();
+    img.src = LEAF_ASSETS[Math.floor(Math.random() * LEAF_ASSETS.length)];
+
+    activeLeaves.current.push({
+      id: Math.random().toString(36),
+      img: img,
+      anchorId: targetId,
+      offsetX: x - anchor.x,
+      offsetY: y - anchor.y,
+      scale: (0.5 + Math.random() * 0.5) * depthScale,
+      rotation: Math.random() * Math.PI * 2,
+      opacity: 0,
+      x: x,
+      y: y
+    });
+  }, []);
 
   const spawnSpecificCreature = useCallback((targetId: string, category: 'bird' | 'butterfly') => {
     const pool = customCreaturesRef.current.filter(c => c.category === category);
@@ -113,10 +176,10 @@ const HandAR: React.FC = () => {
     const cfg = pool[Math.floor(Math.random() * pool.length)];
     const randomOffset = 0.05 + Math.random() * 0.9;
     const creature = category === 'butterfly' 
-      ? new Butterfly(canvasRef.current.width, canvasRef.current.height, targetId, randomOffset, cfg) 
-      : new Bird(canvasRef.current.width, canvasRef.current.height, 100, targetId, randomOffset, [cfg]);
+      ? new Butterfly(canvasRef.current.width, canvasRef.current.height, targetId, handleLeafDrop, randomOffset, cfg) 
+      : new Bird(canvasRef.current.width, canvasRef.current.height, targetId, handleLeafDrop, randomOffset, [cfg]);
     creaturesRef.current.push(creature);
-  }, []);
+  }, [handleLeafDrop]);
 
   useEffect(() => {
     const logo = new Image();
@@ -142,6 +205,94 @@ const HandAR: React.FC = () => {
       const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
       const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
       ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.drawImage(video, ox, oy, dw, dh); ctx.restore();
+
+      // --- Update & Draw Global Leaves ---
+      activeLeaves.current = activeLeaves.current.filter(leaf => {
+        // A. Limb tracking
+        const tracker = limbStatesRef.current.get(leaf.anchorId);
+        if (tracker && tracker.missingFrames < 30) {
+          leaf.x = tracker.centroid.x + leaf.offsetX;
+          leaf.y = tracker.centroid.y + leaf.offsetY;
+        } else {
+          leaf.opacity -= 0.02; // Fade out if limb tracking lost
+        }
+
+        // B. Interactive hand erasing (Trigger Stars)
+        if (handsRef.current && !leaf.isTransforming) {
+          ['Hand_0', 'Hand_1'].forEach(handId => {
+            const handTracker = limbStatesRef.current.get(handId);
+            if (handTracker && handTracker.missingFrames < 5) {
+              const dist = Math.hypot(leaf.x - handTracker.centroid.x, leaf.y - handTracker.centroid.y);
+              if (dist < 50) { 
+                leaf.isTransforming = true;
+                
+                const starImg = new Image();
+                starImg.src = STAR_ASSETS[Math.floor(Math.random() * STAR_ASSETS.length)];
+                
+                activeStars.current.push({
+                  id: Math.random().toString(36),
+                  img: starImg,
+                  x: leaf.x,
+                  y: leaf.y,
+                  scale: 0.5, 
+                  rotation: Math.random() * Math.PI * 0.5,
+                  opacity: 0.0
+                });
+              }
+            }
+          });
+        }
+
+        // C. Transformation Animation
+        if (leaf.isTransforming) {
+          leaf.opacity -= 0.05;
+          leaf.scale *= 0.95;
+          if (leaf.opacity <= 0) return false;
+        } else {
+          // Natural fade in
+          if (leaf.opacity < 1 && leaf.opacity > -0.2) leaf.opacity += 0.06;
+        }
+
+        // D. Render leaf
+        if (leaf.img.complete && leaf.img.naturalWidth > 0 && leaf.opacity > 0) {
+          ctx.save();
+          ctx.globalAlpha = Math.min(leaf.opacity, 1);
+          ctx.translate(leaf.x, leaf.y);
+          ctx.rotate(leaf.rotation);
+          const s = 65 * leaf.scale * 0.6;
+          ctx.drawImage(leaf.img, -s/2, -s/2, s, s);
+          ctx.restore();
+          return true;
+        }
+        return leaf.opacity > 0;
+      });
+
+      // --- Update & Draw Stars ---
+      activeStars.current = activeStars.current.filter(star => {
+        // Aesthetic slow growth and floating
+        star.scale += 0.005; 
+        star.y -= 0.5; 
+        
+        if (star.scale < 0.8) {
+          star.opacity += 0.05; // Fade in
+        } else if (star.scale > 1.2) {
+          star.opacity -= 0.01; // Fade out slowly
+        }
+        
+        if (star.opacity > 1) star.opacity = 1;
+
+        if (star.img.complete && star.img.naturalWidth > 0 && star.opacity > 0) {
+          ctx.save();
+          ctx.globalAlpha = star.opacity;
+          ctx.translate(star.x, star.y);
+          ctx.rotate(star.rotation);
+          const s = 120 * star.scale; 
+          ctx.drawImage(star.img, -s/2, -s/2, s, s);
+          ctx.restore();
+          return true;
+        }
+        return star.opacity > 0;
+      });
 
       creaturesRef.current = creaturesRef.current.filter(c => {
         let targetPoint = null;
@@ -199,7 +350,7 @@ const HandAR: React.FC = () => {
     };
     frameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(frameId);
-  }, []);
+  }, [handleLeafDrop]);
 
   const onFaceResultsRef = useRef<(results: any) => void>(() => {});
   const onHandResultsRef = useRef<(results: any) => void>(() => {});
@@ -317,7 +468,12 @@ const HandAR: React.FC = () => {
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/LOGO.png",
           "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird2_fly.png",
-          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird2_stand.png"
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird2_stand.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%201.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%202.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%203.png",
+          "https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/leaf%204.png",
+          ...STAR_ASSETS
         ];
         ASSETS_TO_PRELOAD.forEach(url => preloadImage(url));
 
@@ -367,7 +523,7 @@ const HandAR: React.FC = () => {
     };
     init();
     return () => { ignore = true; if (cameraRef.current) cameraRef.current.stop(); };
-  }, []);
+  }, [spawnSpecificCreature]);
 
   useEffect(() => {
     const updateText = () => {

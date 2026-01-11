@@ -52,8 +52,8 @@ export class Bird implements CreatureEntity {
   originY: number;
   targetX: number;
   targetY: number;
-  velocityY: number;
-  velocityX: number;
+  velocityY: number = 0;
+  velocityX: number = 0;
   color: string;
   size: number = 20;
   depthScale: number = 1.0;
@@ -73,16 +73,23 @@ export class Bird implements CreatureEntity {
   private screenWidth: number;
   private screenHeight: number;
 
+  // Leaf drop callback
+  onLeafDrop: (x: number, y: number, targetId: string, scale: number) => void;
+  leafTimer: number = 0;
+  leafCount: number = 0;
+  nextLeafTime: number = 1000 + Math.random() * 1000;
+
   constructor(
     screenWidth: number, 
     screenHeight: number, 
-    handPixelWidth: number = 100, 
     targetId: string, 
+    onLeafDrop: (x: number, y: number, targetId: string, scale: number) => void,
     forcedOffset?: number,
     customConfigs?: CustomBirdConfig[]
   ) {
     this.id = Math.random().toString(36).substr(2, 9);
     this.targetId = targetId;
+    this.onLeafDrop = onLeafDrop;
     this.variantSeed = Math.random();
     this.screenWidth = screenWidth;
     this.screenHeight = screenHeight;
@@ -95,8 +102,6 @@ export class Bird implements CreatureEntity {
     this.y = this.originY;
     this.targetX = screenWidth / 2;
     this.targetY = screenHeight / 2;
-    this.velocityX = 0;
-    this.velocityY = 0;
     this.state = CreatureState.FLYING_IN;
     this.perchOffset = forcedOffset !== undefined ? forcedOffset : (0.1 + Math.random() * 0.8);
     if (customConfigs && customConfigs.length > 0) {
@@ -150,11 +155,8 @@ export class Bird implements CreatureEntity {
     else if (this.state === CreatureState.PERCHED) {
       this.opacity = 1.0;
       let shouldFollow = false;
-      
-      // Basic check: ensure target exists and coordinates are valid
       if (perchTarget && !isNaN(perchTarget.x) && !isNaN(perchTarget.y)) {
          const distSq = Math.pow(perchTarget.x - this.x, 2) + Math.pow(perchTarget.y - this.y, 2);
-         // Broad tolerance for mobile jitter: 250,000 (~500px)
          if (distSq < 250000) { 
             shouldFollow = true;
          }
@@ -162,12 +164,25 @@ export class Bird implements CreatureEntity {
 
       if (shouldFollow && perchTarget) {
         const targetY = perchTarget.y - (this.size * this.depthScale * 0.35);
-        
-        // Fix: clamp follow coefficient to 0.8 max to prevent overshooting oscillation
         const followFactor = Math.min(smoothFactor * 16, 0.8);
-        
         this.x = this.x + (perchTarget.x - this.x) * followFactor;
         this.y = this.y + (targetY - this.y) * followFactor;
+
+        // Leaf generation logic delegated to callback
+        if (this.leafCount < 3) {
+            this.leafTimer += dt;
+            if (this.leafTimer > this.nextLeafTime) {
+                this.onLeafDrop(
+                    this.x, 
+                    this.y + (this.size * this.depthScale * 0.4), 
+                    this.targetId,
+                    this.depthScale
+                );
+                this.leafCount++;
+                this.leafTimer = 0;
+                this.nextLeafTime = 1000 + Math.random() * 1000;
+            }
+        }
       } else {
         this.velocityX = 0;
         this.velocityY = 0;

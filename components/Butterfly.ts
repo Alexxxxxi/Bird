@@ -48,8 +48,8 @@ export class Butterfly implements CreatureEntity {
   originY: number;
   targetX: number;
   targetY: number;
-  velocityX: number;
-  velocityY: number;
+  velocityX: number = 0;
+  velocityY: number = 0;
   color: string;
   size: number = 10;
   depthScale: number = 1.0;
@@ -70,15 +70,23 @@ export class Butterfly implements CreatureEntity {
   private screenHeight: number;
   customConfig: CustomBirdConfig;
 
+  // External leaf generation callback
+  onLeafDrop: (x: number, y: number, targetId: string, scale: number) => void;
+  leafTimer: number = 0;
+  leafCount: number = 0;
+  nextLeafTime: number = 1000 + Math.random() * 1000;
+
   constructor(
     screenWidth: number, 
     screenHeight: number, 
     targetId: string, 
+    onLeafDrop: (x: number, y: number, targetId: string, scale: number) => void,
     forcedOffset: number | undefined,
     config: CustomBirdConfig
   ) {
     this.id = Math.random().toString(36).substr(2, 9);
     this.targetId = targetId;
+    this.onLeafDrop = onLeafDrop;
     this.customConfig = config;
     this.species = config.name;
     this.color = '#FFFFFF';
@@ -94,8 +102,6 @@ export class Butterfly implements CreatureEntity {
     this.y = this.originY;
     this.targetX = screenWidth / 2;
     this.targetY = screenHeight / 2;
-    this.velocityX = 0;
-    this.velocityY = 0;
     this.state = CreatureState.FLYING_IN;
     this.perchOffset = forcedOffset !== undefined ? forcedOffset : Math.random();
     this.updateConfig(config);
@@ -143,18 +149,31 @@ export class Butterfly implements CreatureEntity {
       
       if (perchTarget && !isNaN(perchTarget.x) && !isNaN(perchTarget.y)) {
          const distSq = Math.pow(perchTarget.x - this.x, 2) + Math.pow(perchTarget.y - this.y, 2);
-         // Broad tolerance for mobile jitter: 300,000 (~550px)
          if (distSq < 300000) {
             shouldFollow = true;
          }
       }
 
       if (shouldFollow && perchTarget) {
-        // Fix: clamp follow coefficient to 0.8 max
         const followFactor = Math.min(smoothFactor * 16, 0.8);
-        
         this.x = this.x + (perchTarget.x - this.x) * followFactor;
         this.y = this.y + (perchTarget.y - this.y) * followFactor;
+
+        // Leaf generation logic delegated to callback
+        if (this.leafCount < 3) {
+            this.leafTimer += dt;
+            if (this.leafTimer > this.nextLeafTime) {
+                this.onLeafDrop(
+                    this.x, 
+                    this.y + (this.size * this.depthScale * 0.4), 
+                    this.targetId,
+                    this.depthScale
+                );
+                this.leafCount++;
+                this.leafTimer = 0;
+                this.nextLeafTime = 1000 + Math.random() * 1000;
+            }
+        }
       } else {
         this.velocityX = 0;
         this.velocityY = 0;
@@ -188,6 +207,7 @@ export class Butterfly implements CreatureEntity {
   draw(ctx: CanvasRenderingContext2D) {
     if (!this.customConfig || this.opacity <= 0) return;
     const cfg = this.customConfig;
+
     const asset = GlobalAssetManager[cfg.mainAsset] || forceAnimateInDOM(cfg.mainAsset);
     
     let isReady = false;
