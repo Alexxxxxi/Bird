@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.20"; 
+const APP_VERSION = "2.21"; 
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -153,6 +153,7 @@ const HandAR: React.FC = () => {
   const [hintVisible, setHintVisible] = useState(true);
   const hasSmiledRef = useRef(false);
   const isFaceVisibleRef = useRef(false);
+  const lastFaceSeenTimeRef = useRef<number>(performance.now());
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
@@ -269,7 +270,6 @@ const HandAR: React.FC = () => {
               const video = videoRef.current;
               if (!video || !active || video.readyState < 2) return;
               
-              // Run MediaPipe solutions with locks to prevent overlapped calls (Aborted error fix)
               if (faceMeshRef.current && !isFaceProcessing.current) {
                 isFaceProcessing.current = true;
                 try {
@@ -321,8 +321,17 @@ const HandAR: React.FC = () => {
       const dt = Math.max(Math.min(time - lastTime, 100), 1); 
       lastTime = time;
       
-      // Calculate time compensation factor (dt / 16.0) for frame-rate independence
       const timeScale = dt / 16.0;
+      const now = performance.now();
+
+      // Implement 2-second grace period for clearing items when face is gone
+      if (!isFaceVisibleRef.current && now - lastFaceSeenTimeRef.current > 2000) {
+        creaturesRef.current = [];
+        activeLeaves.current = [];
+        activeStars.current = [];
+        activeParticles.current = [];
+        gestureHoldStates.current.clear();
+      }
 
       const canvas = canvasRef.current; const ctx = canvas?.getContext('2d'); const video = videoRef.current;
       if (!canvas || !ctx || !video || video.readyState < 2 || video.videoWidth === 0) { 
@@ -667,15 +676,16 @@ const HandAR: React.FC = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.videoWidth === 0 || !results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-      setAnySmile(false); isFaceVisibleRef.current = false; 
-      creaturesRef.current = [];
-      activeLeaves.current = [];
-      activeStars.current = [];
-      activeParticles.current = [];
-      gestureHoldStates.current.clear();
+      setAnySmile(false); 
+      isFaceVisibleRef.current = false; 
+      // Do NOT clear creatures immediately. The 2-second grace period is handled in render()
       return;
     }
+    
+    // Update face presence and last seen timestamp
     isFaceVisibleRef.current = true;
+    lastFaceSeenTimeRef.current = performance.now();
+
     const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
     const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
     const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
