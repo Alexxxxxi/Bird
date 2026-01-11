@@ -14,7 +14,7 @@ export const ASSET_LIBRARY = [
   },
   {
     id: 'phoenix-stand',
-    url: 'https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand%20V2.png',
+    url: 'https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/bird_stand%20V3.png',
     label: 'Standing Phoenix Sprite V2'
   }
 ];
