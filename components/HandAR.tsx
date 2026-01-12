@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.21"; 
+const APP_VERSION = "2.22"; 
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -678,11 +678,9 @@ const HandAR: React.FC = () => {
     if (!video || !canvas || video.videoWidth === 0 || !results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
       setAnySmile(false); 
       isFaceVisibleRef.current = false; 
-      // Do NOT clear creatures immediately. The 2-second grace period is handled in render()
       return;
     }
     
-    // Update face presence and last seen timestamp
     isFaceVisibleRef.current = true;
     lastFaceSeenTimeRef.current = performance.now();
 
@@ -889,32 +887,7 @@ const HandAR: React.FC = () => {
       </div>
       
       <div className="absolute top-0 right-0 p-6 z-20 pointer-events-auto flex flex-col items-end gap-3">
-        <div className="relative">
-          <button 
-            onClick={() => setShowCameraDropdown(!showCameraDropdown)} 
-            className={`bg-black/40 p-4 rounded-2xl border border-white/10 text-teal-400 hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md flex items-center gap-2 ${showCameraDropdown ? 'bg-white/5 border-teal-400/50' : ''}`}
-          >
-              <CameraIcon className="w-6 h-6" />
-              <ChevronDown className={`w-4 h-4 transition-transform ${showCameraDropdown ? 'rotate-180' : ''}`} />
-          </button>
-          
-          {showCameraDropdown && (
-            <div className="absolute top-full right-0 mt-3 bg-zinc-900 border border-white/10 rounded-2xl overflow-hidden shadow-2xl flex flex-col min-w-[240px] animate-in fade-in slide-in-from-top-2 duration-200 z-50">
-              {devices.length > 0 ? devices.map((device, index) => (
-                <button 
-                  key={device.deviceId || index} 
-                  onClick={() => switchCamera(device.deviceId)}
-                  className={`p-4 text-left text-sm hover:bg-teal-500/10 transition-colors border-b border-white/5 last:border-0 ${selectedDeviceId === device.deviceId ? 'text-teal-400 font-bold bg-teal-500/5' : 'text-zinc-400'}`}
-                >
-                  {device.label || `Camera ${index + 1}`}
-                </button>
-              )) : (
-                <div className="p-4 text-zinc-500 text-sm italic">No cameras found</div>
-              )}
-            </div>
-          )}
-        </div>
-
+        {/* Camera Selection Dropdown UI Hidden as requested while preserving backend logic */}
         <button 
           onClick={() => setIsMirrored(!isMirrored)}
           className={`bg-black/40 p-4 rounded-2xl border border-white/10 hover:bg-white/10 transition-colors shadow-xl backdrop-blur-md flex items-center justify-center ${isMirrored ? 'text-teal-400 border-teal-400/30' : 'text-zinc-400'}`}
