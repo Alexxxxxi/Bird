@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Bird } from './Bird';
 import { Butterfly } from './Butterfly';
@@ -11,7 +12,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.28";
+const APP_VERSION = "2.29";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -172,6 +173,7 @@ const HandAR: React.FC = () => {
 
   const isFaceProcessing = useRef(false);
   const isHandProcessing = useRef(false);
+  const frameCounter = useRef(0);
 
   useEffect(() => {
     isMirroredRef.current = isMirrored;
@@ -197,7 +199,6 @@ const HandAR: React.FC = () => {
   // Initialize AI Input Canvas
   useEffect(() => {
     const canvas = document.createElement('canvas');
-    // Defaults, will be updated based on stream orientation
     canvas.width = 640;
     canvas.height = 360;
     inputCanvasRef.current = canvas;
@@ -254,6 +255,7 @@ const HandAR: React.FC = () => {
         }
         await navigator.mediaDevices.getUserMedia({ video: true });
         const allDevices = await navigator.mediaDevices.enumerateDevices();
+        // Fixed: changed '=' to '===' for comparison of read-only property 'kind'
         const videoDevices = allDevices.filter(device => device.kind === 'videoinput');
         setDevices(videoDevices);
         if (videoDevices.length > 0 && !selectedDeviceId) {
@@ -290,7 +292,6 @@ const HandAR: React.FC = () => {
         ]);
 
         if (videoRef.current && window.Camera) {
-          // Optimized Smooth Resolution: Request 720p ideal for store/mobile compatibility.
           const stream = await navigator.mediaDevices.getUserMedia({
             video: {
               deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
@@ -314,7 +315,6 @@ const HandAR: React.FC = () => {
                 video.play().catch(() => {});
               }
 
-              // --- ADAPTIVE AI CANVAS LOGIC (v2.28) ---
               const isPortrait = video.videoWidth < video.videoHeight;
               const targetW = isPortrait ? 360 : 640;
               const targetH = isPortrait ? 640 : 360;
@@ -329,25 +329,30 @@ const HandAR: React.FC = () => {
                 inputCtx.drawImage(video, 0, 0, targetW, targetH);
               }
 
-              if (faceMeshRef.current && !isFaceProcessing.current) {
-                isFaceProcessing.current = true;
-                try {
-                  await faceMeshRef.current.send({ image: inputCanvas });
-                } catch (e) {
-                  console.warn("FaceMesh send error:", e);
-                } finally {
-                  isFaceProcessing.current = false;
+              // --- INTERLEAVED DETECTION STRATEGY (v2.29) ---
+              // Alternates between models to double processing headroom and solve stuttering.
+              frameCounter.current++;
+              if (frameCounter.current % 2 === 0) {
+                if (faceMeshRef.current && !isFaceProcessing.current) {
+                  isFaceProcessing.current = true;
+                  try {
+                    await faceMeshRef.current.send({ image: inputCanvas });
+                  } catch (e) {
+                    console.warn("FaceMesh send error:", e);
+                  } finally {
+                    isFaceProcessing.current = false;
+                  }
                 }
-              }
-
-              if (handsRef.current && !isHandProcessing.current) {
-                isHandProcessing.current = true;
-                try {
-                  await handsRef.current.send({ image: inputCanvas });
-                } catch (e) {
-                  console.warn("Hands send error:", e);
-                } finally {
-                  isHandProcessing.current = false;
+              } else {
+                if (handsRef.current && !isHandProcessing.current) {
+                  isHandProcessing.current = true;
+                  try {
+                    await handsRef.current.send({ image: inputCanvas });
+                  } catch (e) {
+                    console.warn("Hands send error:", e);
+                  } finally {
+                    isHandProcessing.current = false;
+                  }
                 }
               }
             },
@@ -376,7 +381,8 @@ const HandAR: React.FC = () => {
     let frameId: number;
     let lastTime = performance.now();
     const render = (time: number) => {
-      const dt = Math.max(Math.min(time - lastTime, 100), 1);
+      // Physics Safety (v2.29): Clamp dt to 64ms to prevent physics explosions during lag
+      const dt = Math.max(Math.min(time - lastTime, 64), 1);
       lastTime = time;
      
       const timeScale = dt / 16.0;
@@ -523,7 +529,7 @@ const HandAR: React.FC = () => {
                                   holdState.startTime = performance.now();
                                   holdState.startX = midX;
                                   holdState.startY = midY;
-                              } else if (performance.now() - holdState.startTime > 200) { // Fast Trigger: 200ms
+                              } else if (performance.now() - holdState.startTime > 200) { 
                                   const starImg = new Image();
                                   starImg.src = STAR_ASSETS[Math.floor(Math.random() * STAR_ASSETS.length)];
                                   activeStars.current.push({
@@ -679,7 +685,7 @@ const HandAR: React.FC = () => {
     const headId = `Primary_Head`;
     const mouthL = toPx(landmarks[61]), mouthR = toPx(landmarks[291]);
     
-    // Smile Sensitivity (v2.28): Lowered threshold for easier interaction
+    // Hyper-sensitive Smile: Threshold 0.20
     const isSmiling = (getDistance(mouthL, mouthR) / (faceWidth || 1)) > 0.20;
     if (isSmiling !== anySmile) setAnySmile(isSmiling);
     
@@ -760,13 +766,13 @@ const HandAR: React.FC = () => {
         ]);
         if (window.FaceMesh) {
           const faceMesh = new window.FaceMesh({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
-          faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+          // FaceMesh Tuning (v2.29): Disable refineLandmarks to save compute power for low-end CPUs
+          faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
           faceMesh.onResults((r: any) => onFaceResultsRef.current(r));
           faceMeshRef.current = faceMesh;
         }
         if (window.Hands) {
           const hands = new window.Hands({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-          // Hands Performance (v2.28): Set modelComplexity to 0 (Lite) for mobile/old PC smoothness
           hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
           hands.onResults((r: any) => onHandResultsRef.current(r));
           handsRef.current = hands;
