@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Bird } from './Bird';
 import { Butterfly } from './Butterfly';
@@ -184,9 +183,7 @@ const HandAR: React.FC = () => {
     const video = videoRef.current;
     if (!video) return;
     const updateRes = () => {
-      if (video.videoWidth > 0) {
-        // No setState for resolution to avoid unnecessary re-renders in tight loop
-      }
+      // Intentionally left empty to avoid render-loop overhead, version displayed via metadata
     };
     video.addEventListener('loadedmetadata', updateRes);
     const interval = window.setInterval(updateRes, 3000); 
@@ -255,7 +252,6 @@ const HandAR: React.FC = () => {
         }
         await navigator.mediaDevices.getUserMedia({ video: true });
         const allDevices = await navigator.mediaDevices.enumerateDevices();
-        // Fixed: changed '=' to '===' for comparison of read-only property 'kind'
         const videoDevices = allDevices.filter(device => device.kind === 'videoinput');
         setDevices(videoDevices);
         if (videoDevices.length > 0 && !selectedDeviceId) {
@@ -292,6 +288,7 @@ const HandAR: React.FC = () => {
         ]);
 
         if (videoRef.current && window.Camera) {
+          // Request 720p ideal for perfect balance of clarity and tracking speed
           const stream = await navigator.mediaDevices.getUserMedia({
             video: {
               deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
@@ -315,6 +312,7 @@ const HandAR: React.FC = () => {
                 video.play().catch(() => {});
               }
 
+              // Adaptive canvas resizing for Portrait/Landscape detection
               const isPortrait = video.videoWidth < video.videoHeight;
               const targetW = isPortrait ? 360 : 640;
               const targetH = isPortrait ? 640 : 360;
@@ -329,8 +327,8 @@ const HandAR: React.FC = () => {
                 inputCtx.drawImage(video, 0, 0, targetW, targetH);
               }
 
-              // --- INTERLEAVED DETECTION STRATEGY (v2.29) ---
-              // Alternates between models to double processing headroom and solve stuttering.
+              // --- INTERLEAVED SAMPLING (v2.29) ---
+              // Solves UI stutter by spreading model inference across separate frames
               frameCounter.current++;
               if (frameCounter.current % 2 === 0) {
                 if (faceMeshRef.current && !isFaceProcessing.current) {
@@ -381,7 +379,7 @@ const HandAR: React.FC = () => {
     let frameId: number;
     let lastTime = performance.now();
     const render = (time: number) => {
-      // Physics Safety (v2.29): Clamp dt to 64ms to prevent physics explosions during lag
+      // Physics Safety (v2.29): Clamp dt to prevent "animation loss" during heavy frame drops
       const dt = Math.max(Math.min(time - lastTime, 64), 1);
       lastTime = time;
      
@@ -548,7 +546,7 @@ const HandAR: React.FC = () => {
                                       const startDist = 50 + Math.random() * 30;
                                       activeParticles.current.push({
                                           x: midX + Math.cos(angle) * startDist,
-                                          y: midX + Math.sin(angle) * startDist,
+                                          y: midY + Math.sin(angle) * startDist,
                                           tx: midX,
                                           ty: midY,
                                           speed: 0.15,
@@ -766,13 +764,14 @@ const HandAR: React.FC = () => {
         ]);
         if (window.FaceMesh) {
           const faceMesh = new window.FaceMesh({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
-          // FaceMesh Tuning (v2.29): Disable refineLandmarks to save compute power for low-end CPUs
+          // FaceMesh Performance (v2.29): Disable refineLandmarks to save compute power for low-end CPUs
           faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
           faceMesh.onResults((r: any) => onFaceResultsRef.current(r));
           faceMeshRef.current = faceMesh;
         }
         if (window.Hands) {
           const hands = new window.Hands({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+          // Hands Performance (v2.29): Use modelComplexity 0 for mobile/old PC smoothness
           hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
           hands.onResults((r: any) => onHandResultsRef.current(r));
           handsRef.current = hands;
