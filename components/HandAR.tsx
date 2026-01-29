@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.22"; 
+const APP_VERSION = "2.23"; 
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -92,11 +92,6 @@ const isGestureC = (landmarks: any[]) => {
    return tipDist > palmSize * 0.15 && tipDist < palmSize * 1.1;
 };
 
-const preloadImage = (url: string) => {
-  const img = new Image();
-  img.src = url;
-};
-
 type LimbStateData = { 
   rawPoints: Record<string, any>;
   missingFrames: number;
@@ -129,10 +124,7 @@ const loadScript = (src: string): Promise<void> => {
     const script = document.createElement('script');
     script.src = src; 
     script.crossOrigin = "anonymous";
-    script.onload = () => {
-      console.log(`[Script] Loaded: ${src}`);
-      resolve();
-    }; 
+    script.onload = () => resolve(); 
     script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
     document.head.appendChild(script);
   });
@@ -158,7 +150,6 @@ const HandAR: React.FC = () => {
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
-  const [showCameraDropdown, setShowCameraDropdown] = useState(false);
   const [isMirrored, setIsMirrored] = useState(true); 
   const isMirroredRef = useRef(true); 
 
@@ -176,7 +167,6 @@ const HandAR: React.FC = () => {
   const globalFaceWidthRef = useRef<number>(240);
   const lastSpawnTimesRef = useRef<Map<string, number>>(new Map());
 
-  // Mediapipe processing lock
   const isFaceProcessing = useRef(false);
   const isHandProcessing = useRef(false);
 
@@ -241,7 +231,6 @@ const HandAR: React.FC = () => {
            setSelectedDeviceId(videoDevices[0].deviceId);
         }
       } catch (err: any) {
-        console.error("Error accessing media devices.", err);
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.message?.toLowerCase().includes('permission denied')) {
             setErrorMsg("摄像头权限被拒绝。请在浏览器地址栏点击“锁”图标允许访问摄像头。");
         } else {
@@ -252,11 +241,6 @@ const HandAR: React.FC = () => {
     };
     getCameras();
   }, []);
-
-  const switchCamera = (deviceId: string) => {
-      setSelectedDeviceId(deviceId);
-      setShowCameraDropdown(false);
-  };
 
   useEffect(() => {
     if (!selectedDeviceId) return;
@@ -277,11 +261,19 @@ const HandAR: React.FC = () => {
         ]);
 
         if (videoRef.current && window.Camera) {
+          // Native Video Settings for High Definition & Performance
+          videoRef.current.muted = true;
+          videoRef.current.playsInline = true;
+
           cameraRef.current = new window.Camera(videoRef.current, {
             onFrame: async () => {
               const video = videoRef.current;
               if (!video || !active || video.readyState < 2) return;
               
+              if (video.paused) {
+                video.play().catch(() => {});
+              }
+
               if (faceMeshRef.current && !isFaceProcessing.current) {
                 isFaceProcessing.current = true;
                 try {
@@ -304,7 +296,7 @@ const HandAR: React.FC = () => {
                 }
               }
             },
-            width: 1280, height: 720,
+            width: 1920, height: 1080, // Request HD Resolution
             deviceId: selectedDeviceId
           });
 
@@ -348,7 +340,10 @@ const HandAR: React.FC = () => {
         gestureHoldStates.current.clear();
       }
 
-      const canvas = canvasRef.current; const ctx = canvas?.getContext('2d'); const video = videoRef.current;
+      const canvas = canvasRef.current; 
+      const ctx = canvas?.getContext('2d'); 
+      const video = videoRef.current;
+      
       if (!canvas || !ctx || !video || video.readyState < 2 || video.videoWidth === 0) { 
         frameId = requestAnimationFrame(render); return; 
       }
@@ -357,22 +352,14 @@ const HandAR: React.FC = () => {
         canvas.width = window.innerWidth; canvas.height = window.innerHeight;
       }
 
-      ctx.save();
-      const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
-      const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
-      const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-      
-      if (isMirroredRef.current) {
-          ctx.translate(canvas.width, 0); 
-          ctx.scale(-1, 1);
-      } else {
-          ctx.translate(0, 0);
-          ctx.scale(1, 1);
-      }
-      
-      ctx.drawImage(video, ox, oy, dw, dh); 
-      ctx.restore();
+      // 1. CLEAR HIGH-RES CANVAS (Transparent layer)
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      // 2. NO DRAWIMAGE FOR VIDEO - Native <video> handles the background layer!
+      
+      // 3. DRAW AR ELEMENTS
+      // Coordinate mirroring is handled in toPx mapping, so no global ctx.scale needed here.
+      
       activeLeaves.current = activeLeaves.current.filter(leaf => {
         const tracker = limbStatesRef.current.get(leaf.anchorId);
         if (leaf.anchorId.startsWith('Hand_')) {
@@ -632,10 +619,16 @@ const HandAR: React.FC = () => {
       setAnySmile(false); isFaceVisibleRef.current = false; return;
     }
     isFaceVisibleRef.current = true; lastFaceSeenTimeRef.current = performance.now();
+    
+    // Mapping 0-1 coordinates to the viewport
     const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
     const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
     const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-    const toPx = (l: any) => ({ x: (isMirroredRef.current ? (1.0 - l.x) : l.x) * dw + ox, y: l.y * dh + oy });
+    // Mirrored coordinate mapping logic
+    const toPx = (l: any) => ({ 
+      x: (isMirroredRef.current ? (1.0 - l.x) : l.x) * dw + ox, 
+      y: l.y * dh + oy 
+    });
 
     const landmarks = results.multiFaceLandmarks[0];
     const earL = toPx(landmarks[234]), earR = toPx(landmarks[454]);
@@ -686,7 +679,10 @@ const HandAR: React.FC = () => {
     const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
     const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
     const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-    const toPx = (l: any) => ({ x: (isMirroredRef.current ? (1.0 - l.x) : l.x) * dw + ox, y: l.y * dh + oy });
+    const toPx = (l: any) => ({ 
+      x: (isMirroredRef.current ? (1.0 - l.x) : l.x) * dw + ox, 
+      y: l.y * dh + oy 
+    });
     results.multiHandLandmarks.forEach((landmarks: any, index: number) => {
       const handId = `Hand_${index}`, pxLandmarks = landmarks.map(toPx), palm = pxLandmarks[9], hull = getUpperHandHull(pxLandmarks);
       updateLimbState(handId, palm, { palm, hull, fullLandmarks: pxLandmarks }, 'Hand');
@@ -757,8 +753,18 @@ const HandAR: React.FC = () => {
 
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden select-none">
-      <video ref={videoRef} className="hidden" playsInline muted autoPlay />
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover z-0" />
+      {/* BACKGROUND VIDEO LAYER: Native browser rendering for maximum clarity and speed */}
+      <video 
+        ref={videoRef} 
+        className="absolute inset-0 w-full h-full object-cover z-0" 
+        style={{ transform: isMirrored ? 'scaleX(-1)' : 'none' }}
+        playsInline 
+        muted 
+        autoPlay 
+      />
+
+      {/* AR OVERLAY LAYER: Transparent canvas for sprites & particles */}
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover z-10 pointer-events-none" />
       
       <div className="absolute bottom-0 left-0 w-full h-[28%] md:h-[32%] lg:h-[38%] z-10 pointer-events-none transition-all duration-500"
         style={{ backgroundImage: "url('https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png')", backgroundSize: 'cover', backgroundPosition: 'center 10%', backgroundRepeat: 'no-repeat' }} />
@@ -767,11 +773,23 @@ const HandAR: React.FC = () => {
         <div className={`w-3 h-3 rounded-full transition-all duration-300 ${anySmile ? 'bg-teal-400 shadow-[0_0_10px_#2dd4bf]' : 'bg-white/20'}`} />
       </div>
       
-      <div className={`absolute bottom-20 left-1/2 -translate-x-1/2 z-30 pointer-events-none transition-all duration-700 ${hintVisible ? 'opacity-90' : 'opacity-0 translate-y-2'} w-[90%] max-w-md mx-auto`}>
+      {/* Dynamic Subtitle Box: Positioned higher (bottom-36) to avoid TIPS overlap */}
+      <div className={`absolute bottom-36 left-1/2 -translate-x-1/2 z-30 pointer-events-none transition-all duration-700 ${hintVisible ? 'opacity-90' : 'opacity-0 translate-y-2'} w-[90%] max-w-md mx-auto`}>
         <div className="bg-black/60 backdrop-blur-lg px-6 py-4 rounded-3xl border border-white/10 shadow-2xl flex justify-center">
            <span className="text-white text-lg font-bold tracking-widest text-center block whitespace-normal break-words drop-shadow-lg leading-relaxed" style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}>
              {hintText}
            </span>
+        </div>
+      </div>
+
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center w-full max-w-[90%]">
+        <div className="text-center text-white drop-shadow-md flex flex-col gap-0.5" style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}>
+          <p className="text-[10px] font-black tracking-widest">互动小TIPS:</p>
+          <div className="text-[10px] flex flex-col items-center leading-tight">
+            <span>1. 对着镜头微笑，小动物们就会来到你的身旁</span>
+            <span>2. 晃动身子赶跑他们，留下的茶叶试着用手擦擦</span>
+            <span>3. 对着镜头用手比个C试试</span>
+          </div>
         </div>
       </div>
       
@@ -788,13 +806,11 @@ const HandAR: React.FC = () => {
       {showGuide && (
         <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 transition-opacity duration-500 animate-in fade-in">
           <div className="relative w-full max-w-[310px] rounded-[2.5rem] overflow-hidden shadow-[0_25px_60px_-15px_rgba(0,0,0,0.6)] border border-white/20 flex flex-col animate-in zoom-in-95 duration-300">
-            {/* Background Image: Scaled by 2.9x (2.4x * 1.2) and anchored to the bottom edge */}
             <img 
               src="https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png" 
               className="absolute inset-0 w-full h-full object-cover object-bottom scale-[2.9] origin-bottom" 
               alt=""
             />
-            {/* Scrim for readability */}
             <div className="absolute inset-0 bg-black/15 pointer-events-none" />
 
             <button onClick={() => setShowGuide(false)} className="absolute top-6 right-6 z-20 p-2 bg-black/30 hover:bg-black/50 rounded-full text-white transition-all active:scale-90">
