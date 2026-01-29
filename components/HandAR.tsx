@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.24"; 
+const APP_VERSION = "2.27"; 
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -135,7 +135,7 @@ const HandAR: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
   
-  // AI Input Layer: Low-res canvas for MediaPipe processing
+  // AI Input Layer: Resolution balanced for range and performance
   const inputCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -191,14 +191,14 @@ const HandAR: React.FC = () => {
     const interval = setInterval(updateRes, 3000); 
     return () => {
       video.removeEventListener('loadedmetadata', updateRes);
-      clearInterval(interval);
+      clearInterval(updateRes);
     };
   }, []);
 
-  // Initialize AI Input Canvas with boosted resolution (640x360) for better distance detection
+  // Initialize AI Input Canvas with target resolution (640x360)
   useEffect(() => {
     const canvas = document.createElement('canvas');
-    canvas.width = 640; 
+    canvas.width = 640;
     canvas.height = 360;
     inputCanvasRef.current = canvas;
   }, []);
@@ -290,12 +290,13 @@ const HandAR: React.FC = () => {
           loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js")
         ]);
 
-        // "Maximum Request Strategy": Directly request peak hardware capability (up to 4K ideal).
+        // Optimized Smooth Resolution: Request 720p ideal with NO hard min/max constraints.
+        // This maximizes compatibility and ensures 60fps interaction on standard store hardware.
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-            width: { ideal: 3840 },
-            height: { ideal: 2160 }
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
           }
         });
 
@@ -305,16 +306,13 @@ const HandAR: React.FC = () => {
           videoRef.current.playsInline = true;
           await videoRef.current.play();
 
-          // MediaPipe initialization with high resolution frame source
           cameraRef.current = new window.Camera(videoRef.current, {
             onFrame: async () => {
               const video = videoRef.current;
               const inputCanvas = inputCanvasRef.current;
               if (!video || !active || video.readyState < 2 || !inputCanvas) return;
               
-              if (video.paused) video.play().catch(() => {});
-
-              // AI Input Downscaling for efficient processing while maintaining clarity
+              // Downscale to inputCanvas resolution for balanced MediaPipe performance
               const inputCtx = inputCanvas.getContext('2d');
               if (inputCtx) {
                 inputCtx.drawImage(video, 0, 0, inputCanvas.width, inputCanvas.height);
@@ -342,8 +340,8 @@ const HandAR: React.FC = () => {
                 }
               }
             },
-            width: 1920, 
-            height: 1080 
+            width: 1280, 
+            height: 720 
           });
 
           await cameraRef.current.start();
@@ -515,7 +513,7 @@ const HandAR: React.FC = () => {
                                   holdState.startTime = performance.now();
                                   holdState.startX = midX;
                                   holdState.startY = midY;
-                              } else if (performance.now() - holdState.startTime > 200) { // Hypersensitive trigger: 200ms instead of 800ms
+                              } else if (performance.now() - holdState.startTime > 200) { // Hypersensitive: 200ms
                                   const starImg = new Image();
                                   starImg.src = STAR_ASSETS[Math.floor(Math.random() * STAR_ASSETS.length)];
                                   activeStars.current.push({
@@ -671,8 +669,8 @@ const HandAR: React.FC = () => {
     const headId = `Primary_Head`;
     const mouthL = toPx(landmarks[61]), mouthR = toPx(landmarks[291]);
     
-    // Boosted smile sensitivity: Lowered threshold from 0.35 to 0.25
-    const isSmiling = (getDistance(mouthL, mouthR) / (faceWidth || 1)) > 0.25;
+    // Hyper-sensitive Smile: Threshold lowered to 0.20 for easier triggering
+    const isSmiling = (getDistance(mouthL, mouthR) / (faceWidth || 1)) > 0.20;
     if (isSmiling !== anySmile) setAnySmile(isSmiling);
     
     updateLimbState(headId, { x: (earL.x + earR.x)/2, y: (earL.y + earR.y)/2 }, { earL, earR }, 'Head');
