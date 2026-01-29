@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.23"; 
+const APP_VERSION = "2.24"; 
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -135,7 +135,7 @@ const HandAR: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
   
-  // AI Input Layer: Low-res canvas to reduce processing overhead
+  // AI Input Layer: Low-res canvas for MediaPipe processing
   const inputCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -184,12 +184,7 @@ const HandAR: React.FC = () => {
     if (!video) return;
     const updateRes = () => {
       if (video.videoWidth > 0) {
-        let label = `${video.videoWidth}x${video.videoHeight}`;
-        // If the resulting width is below the high-res threshold, mark it as fallback
-        if (video.videoWidth < 1280) {
-          label += " (Low Res Fallback)";
-        }
-        setVideoResolution(label);
+        setVideoResolution(`${video.videoWidth}x${video.videoHeight}`);
       }
     };
     video.addEventListener('loadedmetadata', updateRes);
@@ -200,11 +195,11 @@ const HandAR: React.FC = () => {
     };
   }, []);
 
-  // Initialize AI Input Canvas with low resolution (480x270)
+  // Initialize AI Input Canvas with boosted resolution (640x360) for better distance detection
   useEffect(() => {
     const canvas = document.createElement('canvas');
-    canvas.width = 480;
-    canvas.height = 270;
+    canvas.width = 640; 
+    canvas.height = 360;
     inputCanvasRef.current = canvas;
   }, []);
 
@@ -284,12 +279,6 @@ const HandAR: React.FC = () => {
       setIsLoading(true);
       setErrorMsg(null);
       
-      const resolutions = [
-        { w: 3840, h: 2160, label: '4K' },
-        { w: 1920, h: 1080, label: '1080p' },
-        { w: 1280, h: 720, label: '720p' }
-      ];
-
       try {
         if (cameraRef.current) {
           try { await cameraRef.current.stop(); } catch(e) {}
@@ -301,47 +290,14 @@ const HandAR: React.FC = () => {
           loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js")
         ]);
 
-        let stream = null;
-        for (const res of resolutions) {
-          try {
-            console.log(`Trying resolution: ${res.label}`);
-            stream = await navigator.mediaDevices.getUserMedia({
-              video: {
-                deviceId: { exact: selectedDeviceId },
-                width: { ideal: res.w },
-                height: { ideal: res.h }
-              }
-            });
-            const track = stream.getVideoTracks()[0];
-            const settings = track.getSettings();
-            if (settings.width && settings.width >= 1280) {
-              console.log(`Successfully acquired ${res.label} stream`);
-              break; 
-            } else {
-              console.warn(`Stream downgrade detected for ${res.label}, retrying...`);
-              track.stop();
-              stream = null;
-            }
-          } catch (e) {
-            console.warn(`Failed to get ${res.label}:`, e);
+        // "Maximum Request Strategy": Directly request peak hardware capability (up to 4K ideal).
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+            width: { ideal: 3840 },
+            height: { ideal: 2160 }
           }
-        }
-
-        // Final Fallback: If HD attempts fail, try a general video request without constraints
-        if (!stream) {
-          console.warn("所有高清分辨率均尝试失败，尝试最低保底模式...");
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({
-              video: { deviceId: { exact: selectedDeviceId } }
-            });
-          } catch (e) {
-            console.error("保底模式也失败了", e);
-          }
-        }
-
-        if (!stream) {
-          throw new Error("无法启动摄像头，请检查连接");
-        }
+        });
 
         if (videoRef.current && window.Camera) {
           videoRef.current.srcObject = stream;
@@ -349,13 +305,16 @@ const HandAR: React.FC = () => {
           videoRef.current.playsInline = true;
           await videoRef.current.play();
 
+          // MediaPipe initialization with high resolution frame source
           cameraRef.current = new window.Camera(videoRef.current, {
             onFrame: async () => {
               const video = videoRef.current;
               const inputCanvas = inputCanvasRef.current;
               if (!video || !active || video.readyState < 2 || !inputCanvas) return;
               
-              // AI Input Degradation: Downscale for performance
+              if (video.paused) video.play().catch(() => {});
+
+              // AI Input Downscaling for efficient processing while maintaining clarity
               const inputCtx = inputCanvas.getContext('2d');
               if (inputCtx) {
                 inputCtx.drawImage(video, 0, 0, inputCanvas.width, inputCanvas.height);
@@ -392,11 +351,7 @@ const HandAR: React.FC = () => {
         }
       } catch (e: any) {
         if (active) {
-          if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError' || e.message?.toLowerCase().includes('permission denied')) {
-            setErrorMsg("摄像头权限被拒绝。请确保浏览器已获得授权。");
-          } else {
-            setErrorMsg("启动摄像头失败: " + e.message);
-          }
+          setErrorMsg("启动摄像头失败: " + e.message);
           setIsLoading(false);
         }
       }
@@ -560,7 +515,7 @@ const HandAR: React.FC = () => {
                                   holdState.startTime = performance.now();
                                   holdState.startX = midX;
                                   holdState.startY = midY;
-                              } else if (performance.now() - holdState.startTime > 800) {
+                              } else if (performance.now() - holdState.startTime > 200) { // Hypersensitive trigger: 200ms instead of 800ms
                                   const starImg = new Image();
                                   starImg.src = STAR_ASSETS[Math.floor(Math.random() * STAR_ASSETS.length)];
                                   activeStars.current.push({
@@ -715,8 +670,11 @@ const HandAR: React.FC = () => {
     globalFaceWidthRef.current = faceWidth;
     const headId = `Primary_Head`;
     const mouthL = toPx(landmarks[61]), mouthR = toPx(landmarks[291]);
-    const isSmiling = (getDistance(mouthL, mouthR) / (faceWidth || 1)) > 0.35;
+    
+    // Boosted smile sensitivity: Lowered threshold from 0.35 to 0.25
+    const isSmiling = (getDistance(mouthL, mouthR) / (faceWidth || 1)) > 0.25;
     if (isSmiling !== anySmile) setAnySmile(isSmiling);
+    
     updateLimbState(headId, { x: (earL.x + earR.x)/2, y: (earL.y + earR.y)/2 }, { earL, earR }, 'Head');
     const chin = toPx(landmarks[152]), forehead = toPx(landmarks[10]);
     const faceHeight = getDistance(forehead, chin);
