@@ -6,7 +6,7 @@ import { getDistance, lerp, isFist, getUpperHandHull, getPointOnPolyline } from 
 import { PRESET_BIRDS } from '../constants';
 import { saveBirdToDB, getAllBirdsFromDB, deleteBirdFromDB } from '../utils/db';
 import { 
-  X, Sparkles, Trash2, RefreshCw, Camera as CameraIcon, ChevronDown, FlipHorizontal 
+  X, RefreshCw, FlipHorizontal 
 } from 'lucide-react';
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
@@ -188,16 +188,17 @@ const HandAR: React.FC = () => {
       }
     };
     video.addEventListener('loadedmetadata', updateRes);
-    const interval = setInterval(updateRes, 3000); 
+    const interval = window.setInterval(updateRes, 3000); 
     return () => {
       video.removeEventListener('loadedmetadata', updateRes);
-      clearInterval(updateRes);
+      window.clearInterval(interval);
     };
   }, []);
 
-  // Initialize AI Input Canvas with target resolution (640x360)
+  // Initialize AI Input Canvas
   useEffect(() => {
     const canvas = document.createElement('canvas');
+    // Default to landscape, will be updated in onFrame based on stream
     canvas.width = 640;
     canvas.height = 360;
     inputCanvasRef.current = canvas;
@@ -290,8 +291,7 @@ const HandAR: React.FC = () => {
           loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js")
         ]);
 
-        // Optimized Smooth Resolution: Request 720p ideal with NO hard min/max constraints.
-        // This maximizes compatibility and ensures 60fps interaction on standard store hardware.
+        // Request standard 720p for better compatibility and performance
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
@@ -312,10 +312,31 @@ const HandAR: React.FC = () => {
               const inputCanvas = inputCanvasRef.current;
               if (!video || !active || video.readyState < 2 || !inputCanvas) return;
               
-              // Downscale to inputCanvas resolution for balanced MediaPipe performance
+              // --- ADAPTIVE AI CANVAS LOGIC ---
+              // Prevents image stretching on portrait devices like iPhone
+              const targetLong = 640;
+              const targetShort = 360;
+              let targetW, targetH;
+
+              if (video.videoWidth > video.videoHeight) {
+                // Landscape (PC/Store)
+                targetW = targetLong;
+                targetH = targetShort;
+              } else {
+                // Portrait (Mobile/iPhone)
+                targetW = targetShort;
+                targetH = targetLong;
+              }
+
+              // Only reset canvas dimensions if changed to avoid unnecessary re-allocation
+              if (inputCanvas.width !== targetW || inputCanvas.height !== targetH) {
+                inputCanvas.width = targetW;
+                inputCanvas.height = targetH;
+              }
+
               const inputCtx = inputCanvas.getContext('2d');
               if (inputCtx) {
-                inputCtx.drawImage(video, 0, 0, inputCanvas.width, inputCanvas.height);
+                inputCtx.drawImage(video, 0, 0, targetW, targetH);
               }
 
               if (faceMeshRef.current && !isFaceProcessing.current) {
@@ -513,7 +534,7 @@ const HandAR: React.FC = () => {
                                   holdState.startTime = performance.now();
                                   holdState.startX = midX;
                                   holdState.startY = midY;
-                              } else if (performance.now() - holdState.startTime > 200) { // Hypersensitive: 200ms
+                              } else if (performance.now() - holdState.startTime > 200) { 
                                   const starImg = new Image();
                                   starImg.src = STAR_ASSETS[Math.floor(Math.random() * STAR_ASSETS.length)];
                                   activeStars.current.push({
@@ -669,7 +690,7 @@ const HandAR: React.FC = () => {
     const headId = `Primary_Head`;
     const mouthL = toPx(landmarks[61]), mouthR = toPx(landmarks[291]);
     
-    // Hyper-sensitive Smile: Threshold lowered to 0.20 for easier triggering
+    // Hyper-sensitive Smile: Threshold 0.20
     const isSmiling = (getDistance(mouthL, mouthR) / (faceWidth || 1)) > 0.20;
     if (isSmiling !== anySmile) setAnySmile(isSmiling);
     
@@ -770,7 +791,7 @@ const HandAR: React.FC = () => {
   useEffect(() => {
     const updateText = () => {
       setHintVisible(false);
-      setTimeout(() => {
+      window.setTimeout(() => {
         const hasNoCreatures = creaturesRef.current.length === 0;
         let texts = !isFaceVisibleRef.current ? NO_FACE_TEXTS : (anySmile ? SMILING_TEXTS : (hasNoCreatures ? WAITING_SMILE_TEXTS : (hasSmiledRef.current ? AFTER_SMILE_TEXTS : WAITING_SMILE_TEXTS)));
         setHintText(texts[Math.floor(Math.random() * texts.length)]);
@@ -778,12 +799,12 @@ const HandAR: React.FC = () => {
         if (anySmile) hasSmiledRef.current = true;
       }, 500); 
     };
-    const interval = setInterval(updateText, 3500); return () => clearInterval(interval);
+    const interval = window.setInterval(updateText, 3500); return () => window.clearInterval(interval);
   }, [anySmile]);
 
   useEffect(() => {
-    const timer = setInterval(() => limbStatesRef.current.forEach(s => s.missingFrames++), 100);
-    return () => clearInterval(timer);
+    const timer = window.setInterval(() => limbStatesRef.current.forEach(s => s.missingFrames++), 100);
+    return () => window.clearInterval(timer);
   }, []);
 
   return (
