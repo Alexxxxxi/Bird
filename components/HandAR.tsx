@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.33";
+const APP_VERSION = "2.34";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -133,7 +133,6 @@ const loadScript = (src: string): Promise<void> => {
 const HandAR: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const logoImgRef = useRef<HTMLImageElement | null>(null);
   
   const inputCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -230,13 +229,6 @@ const HandAR: React.FC = () => {
       : new Bird(canvasRef.current.width, canvasRef.current.height, targetId, handleLeafDrop, randomOffset, [cfg]);
     creaturesRef.current.push(creature);
   }, [handleLeafDrop]);
-
-  useEffect(() => {
-    const logo = new Image();
-    logo.crossOrigin = "anonymous";
-    logo.src = LOGO_URL;
-    logo.onload = () => { logoImgRef.current = logo; };
-  }, []);
 
   useEffect(() => {
     const getCameras = async () => {
@@ -641,15 +633,6 @@ const HandAR: React.FC = () => {
         return !(c.state === CreatureState.FLYING_AWAY && (c.y < -500 || c.y > canvas.height + 500));
       });
 
-      const logoImg = logoImgRef.current;
-      if (logoImg && logoImg.complete && logoImg.naturalWidth > 0) {
-        const logoRatio = lerp(0.25, 0.10, Math.min(Math.max((canvas.width - 375) / 1225, 0), 1));
-        const logoTargetWidth = canvas.width * logoRatio;
-        const logoScale = logoTargetWidth / logoImg.naturalWidth;
-        const ldw = logoImg.naturalWidth * logoScale, ldh = logoImg.naturalHeight * logoScale;
-        const ldx = (canvas.width - ldw) / 2, ldy = canvas.height * 0.05;
-        ctx.drawImage(logoImg, ldx, ldy, ldw, ldh);
-      }
       frameId = requestAnimationFrame(render);
     };
     frameId = requestAnimationFrame(render);
@@ -810,6 +793,13 @@ const HandAR: React.FC = () => {
       />
 
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover z-10 pointer-events-none" />
+
+      {/* Static Responsive Logo: Crystal Clear and Performance Friendly */}
+      <img 
+        src={LOGO_URL} 
+        className="absolute top-[5%] left-1/2 -translate-x-1/2 z-20 w-[25%] md:w-[15%] lg:w-[10%] max-w-[300px] pointer-events-none drop-shadow-md" 
+        alt="Logo" 
+      />
      
       <div className="absolute bottom-0 left-0 w-full h-[28%] md:h-[32%] lg:h-[38%] z-10 pointer-events-none transition-all duration-500"
         style={{ backgroundImage: "url('https://bird-1394762829.cos.ap-guangzhou.myqcloud.com/Background%201.png')", backgroundSize: 'cover', backgroundPosition: 'center 10%', backgroundRepeat: 'no-repeat' }} />
