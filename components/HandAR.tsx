@@ -11,11 +11,11 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.29";
+const APP_VERSION = "2.30";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
-  "快来和你的新朋友们打个招呼..."
+  "快来 and 你的新朋友们打个招呼..."
 ];
 
 const WAITING_SMILE_TEXTS = [
@@ -135,7 +135,7 @@ const HandAR: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
   
-  // AI Input Layer: Resolution balanced for range and performance
+  // AI Input Layer: Resolution further optimized for legacy integrated graphics (v2.30)
   const inputCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -183,7 +183,7 @@ const HandAR: React.FC = () => {
     const video = videoRef.current;
     if (!video) return;
     const updateRes = () => {
-      // Intentionally left empty to avoid render-loop overhead, version displayed via metadata
+      // Intentionally left empty to avoid render-loop overhead
     };
     video.addEventListener('loadedmetadata', updateRes);
     const interval = window.setInterval(updateRes, 3000); 
@@ -193,11 +193,11 @@ const HandAR: React.FC = () => {
     };
   }, []);
 
-  // Initialize AI Input Canvas
+  // Initialize AI Input Canvas with lower baseline (v2.30)
   useEffect(() => {
     const canvas = document.createElement('canvas');
-    canvas.width = 640;
-    canvas.height = 360;
+    canvas.width = 480;
+    canvas.height = 270;
     inputCanvasRef.current = canvas;
   }, []);
 
@@ -288,7 +288,6 @@ const HandAR: React.FC = () => {
         ]);
 
         if (videoRef.current && window.Camera) {
-          // Request 720p ideal for perfect balance of clarity and tracking speed
           const stream = await navigator.mediaDevices.getUserMedia({
             video: {
               deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
@@ -312,25 +311,31 @@ const HandAR: React.FC = () => {
                 video.play().catch(() => {});
               }
 
-              // Adaptive canvas resizing for Portrait/Landscape detection
+              // --- THREE-FRAME CYCLE STRATEGY (v2.30) ---
+              // Each frame handles a different task to prevent AI bottlenecks from freezing the UI.
+              frameCounter.current++;
+              const slot = frameCounter.current % 3;
+
+              // Slot 2 is Idle (Skip AI): Gives CPU/GPU a breather to process heavy rendering logic.
+              if (slot === 2) return;
+
+              // Ultra-Low AI Input Resolution: 480x270 baseline
               const isPortrait = video.videoWidth < video.videoHeight;
-              const targetW = isPortrait ? 360 : 640;
-              const targetH = isPortrait ? 640 : 360;
+              const targetW = isPortrait ? 270 : 480;
+              const targetH = isPortrait ? 480 : 270;
 
               if (inputCanvas.width !== targetW || inputCanvas.height !== targetH) {
                 inputCanvas.width = targetW;
                 inputCanvas.height = targetH;
               }
 
-              const inputCtx = inputCanvas.getContext('2d');
+              const inputCtx = inputCanvas.getContext('2d', { willReadFrequently: true });
               if (inputCtx) {
                 inputCtx.drawImage(video, 0, 0, targetW, targetH);
               }
 
-              // --- INTERLEAVED SAMPLING (v2.29) ---
-              // Solves UI stutter by spreading model inference across separate frames
-              frameCounter.current++;
-              if (frameCounter.current % 2 === 0) {
+              if (slot === 0) {
+                // FaceMesh Inference Frame
                 if (faceMeshRef.current && !isFaceProcessing.current) {
                   isFaceProcessing.current = true;
                   try {
@@ -341,7 +346,8 @@ const HandAR: React.FC = () => {
                     isFaceProcessing.current = false;
                   }
                 }
-              } else {
+              } else if (slot === 1) {
+                // Hands Inference Frame
                 if (handsRef.current && !isHandProcessing.current) {
                   isHandProcessing.current = true;
                   try {
@@ -379,7 +385,7 @@ const HandAR: React.FC = () => {
     let frameId: number;
     let lastTime = performance.now();
     const render = (time: number) => {
-      // Physics Safety (v2.29): Clamp dt to prevent "animation loss" during heavy frame drops
+      // Physics Safety (v2.29/2.30): Keep dt capped to prevent coordinate explosions on slow machines
       const dt = Math.max(Math.min(time - lastTime, 64), 1);
       lastTime = time;
      
@@ -683,7 +689,7 @@ const HandAR: React.FC = () => {
     const headId = `Primary_Head`;
     const mouthL = toPx(landmarks[61]), mouthR = toPx(landmarks[291]);
     
-    // Hyper-sensitive Smile: Threshold 0.20
+    // Smile Logic (v2.30): Keep high sensitivity
     const isSmiling = (getDistance(mouthL, mouthR) / (faceWidth || 1)) > 0.20;
     if (isSmiling !== anySmile) setAnySmile(isSmiling);
     
@@ -764,14 +770,12 @@ const HandAR: React.FC = () => {
         ]);
         if (window.FaceMesh) {
           const faceMesh = new window.FaceMesh({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
-          // FaceMesh Performance (v2.29): Disable refineLandmarks to save compute power for low-end CPUs
           faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
           faceMesh.onResults((r: any) => onFaceResultsRef.current(r));
           faceMeshRef.current = faceMesh;
         }
         if (window.Hands) {
           const hands = new window.Hands({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-          // Hands Performance (v2.29): Use modelComplexity 0 for mobile/old PC smoothness
           hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
           hands.onResults((r: any) => onHandResultsRef.current(r));
           handsRef.current = hands;
@@ -822,7 +826,7 @@ const HandAR: React.FC = () => {
         <div className={`w-3 h-3 rounded-full transition-all duration-300 ${anySmile ? 'bg-teal-400 shadow-[0_0_10px_#2dd4bf]' : 'bg-white/20'}`} />
       </div>
      
-      <div className={`absolute bottom-36 left-1/2 -translate-x-1/2 z-30 pointer-events-none transition-all duration-700 ${hintVisible ? 'opacity-90' : 'opacity-0 translate-y-2'} w-[90%] max-w-md mx-auto`}>
+      <div className={`absolute bottom-28 left-1/2 -translate-x-1/2 z-30 pointer-events-none transition-all duration-700 ${hintVisible ? 'opacity-90' : 'opacity-0 translate-y-2'} w-[90%] max-w-md mx-auto`}>
         <div className="bg-black/60 backdrop-blur-lg px-6 py-4 rounded-3xl border border-white/10 shadow-2xl flex justify-center">
            <span className="text-white text-lg font-bold tracking-widest text-center block whitespace-normal break-words drop-shadow-lg leading-relaxed" style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}>
              {hintText}
