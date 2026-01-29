@@ -11,7 +11,7 @@ import {
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.30";
+const APP_VERSION = "2.31";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -135,7 +135,6 @@ const HandAR: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
   
-  // AI Input Layer: Resolution further optimized for legacy integrated graphics (v2.30)
   const inputCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -178,12 +177,11 @@ const HandAR: React.FC = () => {
     isMirroredRef.current = isMirrored;
   }, [isMirrored]);
 
-  // Update resolution display based on video actual dimensions
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     const updateRes = () => {
-      // Intentionally left empty to avoid render-loop overhead
+      // Logic held internally
     };
     video.addEventListener('loadedmetadata', updateRes);
     const interval = window.setInterval(updateRes, 3000); 
@@ -193,7 +191,7 @@ const HandAR: React.FC = () => {
     };
   }, []);
 
-  // Initialize AI Input Canvas with lower baseline (v2.30)
+  // Initialize AI Input Canvas
   useEffect(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 480;
@@ -311,15 +309,12 @@ const HandAR: React.FC = () => {
                 video.play().catch(() => {});
               }
 
-              // --- THREE-FRAME CYCLE STRATEGY (v2.30) ---
-              // Each frame handles a different task to prevent AI bottlenecks from freezing the UI.
+              // --- 4-STEP CYCLE STRATEGY (v2.31) ---
               frameCounter.current++;
-              const slot = frameCounter.current % 3;
+              const slot = frameCounter.current % 4;
 
-              // Slot 2 is Idle (Skip AI): Gives CPU/GPU a breather to process heavy rendering logic.
-              if (slot === 2) return;
+              if (slot === 1 || slot === 3) return;
 
-              // Ultra-Low AI Input Resolution: 480x270 baseline
               const isPortrait = video.videoWidth < video.videoHeight;
               const targetW = isPortrait ? 270 : 480;
               const targetH = isPortrait ? 480 : 270;
@@ -329,13 +324,15 @@ const HandAR: React.FC = () => {
                 inputCanvas.height = targetH;
               }
 
-              const inputCtx = inputCanvas.getContext('2d', { willReadFrequently: true });
+              const inputCtx = inputCanvas.getContext('2d', { 
+                willReadFrequently: true,
+                alpha: false 
+              });
               if (inputCtx) {
                 inputCtx.drawImage(video, 0, 0, targetW, targetH);
               }
 
               if (slot === 0) {
-                // FaceMesh Inference Frame
                 if (faceMeshRef.current && !isFaceProcessing.current) {
                   isFaceProcessing.current = true;
                   try {
@@ -346,8 +343,7 @@ const HandAR: React.FC = () => {
                     isFaceProcessing.current = false;
                   }
                 }
-              } else if (slot === 1) {
-                // Hands Inference Frame
+              } else if (slot === 2) {
                 if (handsRef.current && !isHandProcessing.current) {
                   isHandProcessing.current = true;
                   try {
@@ -385,7 +381,6 @@ const HandAR: React.FC = () => {
     let frameId: number;
     let lastTime = performance.now();
     const render = (time: number) => {
-      // Physics Safety (v2.29/2.30): Keep dt capped to prevent coordinate explosions on slow machines
       const dt = Math.max(Math.min(time - lastTime, 64), 1);
       lastTime = time;
      
@@ -689,7 +684,6 @@ const HandAR: React.FC = () => {
     const headId = `Primary_Head`;
     const mouthL = toPx(landmarks[61]), mouthR = toPx(landmarks[291]);
     
-    // Smile Logic (v2.30): Keep high sensitivity
     const isSmiling = (getDistance(mouthL, mouthR) / (faceWidth || 1)) > 0.20;
     if (isSmiling !== anySmile) setAnySmile(isSmiling);
     
@@ -834,13 +828,14 @@ const HandAR: React.FC = () => {
         </div>
       </div>
 
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center w-full max-w-[90%]">
-        <div className="text-center text-white drop-shadow-md flex flex-col gap-0.5" style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}>
-          <p className="text-[10px] font-black tracking-widest">互动小TIPS:</p>
-          <div className="text-[10px] flex flex-col items-center leading-tight">
-            <span>1. 对着镜头微笑，小动物们就会来到你的身旁</span>
-            <span>2. 晃动身子赶跑他们，留下的茶叶试着用手擦擦</span>
-            <span>3. 对着镜头用手比个C试试</span>
+      {/* Re-positioned TIPS: Left-aligned, Vertically Centered, Forced Wrapping */}
+      <div className="absolute left-6 top-1/2 -translate-y-1/2 z-30 pointer-events-none flex flex-col items-start">
+        <div className="text-left text-white drop-shadow-md flex flex-col gap-1.5" style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}>
+          <p className="text-[10px] font-black tracking-widest opacity-80 border-l-2 border-teal-400/50 pl-2">互动小TIPS:</p>
+          <div className="text-[10px] flex flex-col gap-2 leading-relaxed">
+            <span className="w-[12em] block break-all">1. 对着镜头微笑，小动物们就会来到你的身旁</span>
+            <span className="w-[12em] block break-all">2. 晃动身子赶跑他们，留下的茶叶试着用手擦擦</span>
+            <span className="w-[12em] block break-all">3. 对着镜头用手比个C试试</span>
           </div>
         </div>
       </div>
