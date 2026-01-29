@@ -134,6 +134,9 @@ const HandAR: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
+  
+  // AI Input Layer: Low-res canvas to reduce processing overhead
+  const inputCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [showGuide, setShowGuide] = useState(true); 
@@ -141,6 +144,7 @@ const HandAR: React.FC = () => {
   const [customCreatures, setCustomCreatures] = useState<CustomBirdConfig[]>([]);
   const customCreaturesRef = useRef<CustomBirdConfig[]>([]);
   const [anySmile, setAnySmile] = useState(false);
+  const [videoResolution, setVideoResolution] = useState<string>("Detecting...");
   
   const [hintText, setHintText] = useState("");
   const [hintVisible, setHintVisible] = useState(true);
@@ -173,6 +177,36 @@ const HandAR: React.FC = () => {
   useEffect(() => {
     isMirroredRef.current = isMirrored;
   }, [isMirrored]);
+
+  // Update resolution display based on video actual dimensions
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const updateRes = () => {
+      if (video.videoWidth > 0) {
+        let label = `${video.videoWidth}x${video.videoHeight}`;
+        // If the resulting width is below the high-res threshold, mark it as fallback
+        if (video.videoWidth < 1280) {
+          label += " (Low Res Fallback)";
+        }
+        setVideoResolution(label);
+      }
+    };
+    video.addEventListener('loadedmetadata', updateRes);
+    const interval = setInterval(updateRes, 3000); 
+    return () => {
+      video.removeEventListener('loadedmetadata', updateRes);
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Initialize AI Input Canvas with low resolution (480x270)
+  useEffect(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 480;
+    canvas.height = 270;
+    inputCanvasRef.current = canvas;
+  }, []);
 
   const handleLeafDrop = useCallback((x: number, y: number, targetId: string, depthScale: number) => {
     const tracker = limbStatesRef.current.get(targetId);
@@ -249,6 +283,13 @@ const HandAR: React.FC = () => {
     const startCamera = async () => {
       setIsLoading(true);
       setErrorMsg(null);
+      
+      const resolutions = [
+        { w: 3840, h: 2160, label: '4K' },
+        { w: 1920, h: 1080, label: '1080p' },
+        { w: 1280, h: 720, label: '720p' }
+      ];
+
       try {
         if (cameraRef.current) {
           try { await cameraRef.current.stop(); } catch(e) {}
@@ -260,24 +301,70 @@ const HandAR: React.FC = () => {
           loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js")
         ]);
 
+        let stream = null;
+        for (const res of resolutions) {
+          try {
+            console.log(`Trying resolution: ${res.label}`);
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: {
+                deviceId: { exact: selectedDeviceId },
+                width: { ideal: res.w },
+                height: { ideal: res.h }
+              }
+            });
+            const track = stream.getVideoTracks()[0];
+            const settings = track.getSettings();
+            if (settings.width && settings.width >= 1280) {
+              console.log(`Successfully acquired ${res.label} stream`);
+              break; 
+            } else {
+              console.warn(`Stream downgrade detected for ${res.label}, retrying...`);
+              track.stop();
+              stream = null;
+            }
+          } catch (e) {
+            console.warn(`Failed to get ${res.label}:`, e);
+          }
+        }
+
+        // Final Fallback: If HD attempts fail, try a general video request without constraints
+        if (!stream) {
+          console.warn("所有高清分辨率均尝试失败，尝试最低保底模式...");
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: { exact: selectedDeviceId } }
+            });
+          } catch (e) {
+            console.error("保底模式也失败了", e);
+          }
+        }
+
+        if (!stream) {
+          throw new Error("无法启动摄像头，请检查连接");
+        }
+
         if (videoRef.current && window.Camera) {
-          // Native Video Settings for High Definition & Performance
+          videoRef.current.srcObject = stream;
           videoRef.current.muted = true;
           videoRef.current.playsInline = true;
+          await videoRef.current.play();
 
           cameraRef.current = new window.Camera(videoRef.current, {
             onFrame: async () => {
               const video = videoRef.current;
-              if (!video || !active || video.readyState < 2) return;
+              const inputCanvas = inputCanvasRef.current;
+              if (!video || !active || video.readyState < 2 || !inputCanvas) return;
               
-              if (video.paused) {
-                video.play().catch(() => {});
+              // AI Input Degradation: Downscale for performance
+              const inputCtx = inputCanvas.getContext('2d');
+              if (inputCtx) {
+                inputCtx.drawImage(video, 0, 0, inputCanvas.width, inputCanvas.height);
               }
 
               if (faceMeshRef.current && !isFaceProcessing.current) {
                 isFaceProcessing.current = true;
                 try {
-                  await faceMeshRef.current.send({ image: video });
+                  await faceMeshRef.current.send({ image: inputCanvas });
                 } catch (e) {
                   console.warn("FaceMesh send error:", e);
                 } finally {
@@ -288,7 +375,7 @@ const HandAR: React.FC = () => {
               if (handsRef.current && !isHandProcessing.current) {
                 isHandProcessing.current = true;
                 try {
-                  await handsRef.current.send({ image: video });
+                  await handsRef.current.send({ image: inputCanvas });
                 } catch (e) {
                   console.warn("Hands send error:", e);
                 } finally {
@@ -296,8 +383,8 @@ const HandAR: React.FC = () => {
                 }
               }
             },
-            width: 1920, height: 1080, // Request HD Resolution
-            deviceId: selectedDeviceId
+            width: 1920, 
+            height: 1080 
           });
 
           await cameraRef.current.start();
@@ -352,13 +439,7 @@ const HandAR: React.FC = () => {
         canvas.width = window.innerWidth; canvas.height = window.innerHeight;
       }
 
-      // 1. CLEAR HIGH-RES CANVAS (Transparent layer)
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // 2. NO DRAWIMAGE FOR VIDEO - Native <video> handles the background layer!
-      
-      // 3. DRAW AR ELEMENTS
-      // Coordinate mirroring is handled in toPx mapping, so no global ctx.scale needed here.
       
       activeLeaves.current = activeLeaves.current.filter(leaf => {
         const tracker = limbStatesRef.current.get(leaf.anchorId);
@@ -620,11 +701,9 @@ const HandAR: React.FC = () => {
     }
     isFaceVisibleRef.current = true; lastFaceSeenTimeRef.current = performance.now();
     
-    // Mapping 0-1 coordinates to the viewport
     const ratio = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
     const dw = video.videoWidth * ratio, dh = video.videoHeight * ratio;
     const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-    // Mirrored coordinate mapping logic
     const toPx = (l: any) => ({ 
       x: (isMirroredRef.current ? (1.0 - l.x) : l.x) * dw + ox, 
       y: l.y * dh + oy 
@@ -753,7 +832,6 @@ const HandAR: React.FC = () => {
 
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden select-none">
-      {/* BACKGROUND VIDEO LAYER: Native browser rendering for maximum clarity and speed */}
       <video 
         ref={videoRef} 
         className="absolute inset-0 w-full h-full object-cover z-0" 
@@ -763,7 +841,6 @@ const HandAR: React.FC = () => {
         autoPlay 
       />
 
-      {/* AR OVERLAY LAYER: Transparent canvas for sprites & particles */}
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover z-10 pointer-events-none" />
       
       <div className="absolute bottom-0 left-0 w-full h-[28%] md:h-[32%] lg:h-[38%] z-10 pointer-events-none transition-all duration-500"
@@ -773,7 +850,6 @@ const HandAR: React.FC = () => {
         <div className={`w-3 h-3 rounded-full transition-all duration-300 ${anySmile ? 'bg-teal-400 shadow-[0_0_10px_#2dd4bf]' : 'bg-white/20'}`} />
       </div>
       
-      {/* Dynamic Subtitle Box: Positioned higher (bottom-36) to avoid TIPS overlap */}
       <div className={`absolute bottom-36 left-1/2 -translate-x-1/2 z-30 pointer-events-none transition-all duration-700 ${hintVisible ? 'opacity-90' : 'opacity-0 translate-y-2'} w-[90%] max-w-md mx-auto`}>
         <div className="bg-black/60 backdrop-blur-lg px-6 py-4 rounded-3xl border border-white/10 shadow-2xl flex justify-center">
            <span className="text-white text-lg font-bold tracking-widest text-center block whitespace-normal break-words drop-shadow-lg leading-relaxed" style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}>
@@ -800,7 +876,9 @@ const HandAR: React.FC = () => {
       </div>
 
       <div className="absolute bottom-4 left-4 z-50 pointer-events-none">
-        <span className="text-black/30 text-[10px] font-mono font-bold tracking-widest uppercase" style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}>{APP_VERSION}</span>
+        <span className="text-black/30 text-[10px] font-mono font-bold tracking-widest uppercase" style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}>
+          {APP_VERSION} | CAM: {videoResolution}
+        </span>
       </div>
 
       {showGuide && (
