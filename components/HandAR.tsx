@@ -6,12 +6,12 @@ import { getDistance, lerp, isFist, getUpperHandHull, getPointOnPolyline } from 
 import { PRESET_BIRDS } from '../constants';
 import { saveBirdToDB, getAllBirdsFromDB, deleteBirdFromDB } from '../utils/db';
 import {
-  X, RefreshCw, FlipHorizontal
+  X, RefreshCw, FlipHorizontal, ChevronRight, ChevronLeft
 } from 'lucide-react';
 
 declare global { interface Window { FaceMesh: any; Hands: any; Camera: any; } }
 
-const APP_VERSION = "2.31";
+const APP_VERSION = "2.33";
 
 const NO_FACE_TEXTS = [
   "人呢?快出来陪我玩...",
@@ -143,6 +143,7 @@ const HandAR: React.FC = () => {
   const [customCreatures, setCustomCreatures] = useState<CustomBirdConfig[]>([]);
   const customCreaturesRef = useRef<CustomBirdConfig[]>([]);
   const [anySmile, setAnySmile] = useState(false);
+  const [isTipsExpanded, setIsTipsExpanded] = useState(false);
  
   const [hintText, setHintText] = useState("");
   const [hintVisible, setHintVisible] = useState(true);
@@ -180,9 +181,7 @@ const HandAR: React.FC = () => {
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const updateRes = () => {
-      // Logic held internally
-    };
+    const updateRes = () => {};
     video.addEventListener('loadedmetadata', updateRes);
     const interval = window.setInterval(updateRes, 3000); 
     return () => {
@@ -191,7 +190,6 @@ const HandAR: React.FC = () => {
     };
   }, []);
 
-  // Initialize AI Input Canvas
   useEffect(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 480;
@@ -828,16 +826,33 @@ const HandAR: React.FC = () => {
         </div>
       </div>
 
-      {/* Re-positioned TIPS: Left-aligned, Vertically Centered, Forced Wrapping */}
-      <div className="absolute left-6 top-1/2 -translate-y-1/2 z-30 pointer-events-none flex flex-col items-start">
-        <div className="text-left text-white drop-shadow-md flex flex-col gap-1.5" style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}>
-          <p className="text-[10px] font-black tracking-widest opacity-80 border-l-2 border-teal-400/50 pl-2">互动小TIPS:</p>
-          <div className="text-[10px] flex flex-col gap-2 leading-relaxed">
-            <span className="w-[12em] block break-all">1. 对着镜头微笑，小动物们就会来到你的身旁</span>
-            <span className="w-[12em] block break-all">2. 晃动身子赶跑他们，留下的茶叶试着用手擦擦</span>
-            <span className="w-[12em] block break-all">3. 对着镜头用手比个C试试</span>
+      {/* Collapsible TIPS: Left-aligned, Vertically Centered */}
+      <div className="absolute left-0 top-1/2 -translate-y-1/2 z-30 pointer-events-auto flex flex-col items-start transition-all duration-300 pl-4">
+        {!isTipsExpanded ? (
+          <button 
+            onClick={() => setIsTipsExpanded(true)}
+            className="bg-black/40 backdrop-blur-md p-1.5 rounded-r-xl border border-white/10 text-white flex items-center gap-1 hover:bg-white/10 transition-all border-l-0 -ml-4 pl-4.5 shadow-xl"
+          >
+            <ChevronRight className="w-3.5 h-3.5 text-teal-400" />
+            <span className="text-[8px] font-black tracking-widest uppercase" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>TIPS</span>
+          </button>
+        ) : (
+          <div 
+            onClick={() => setIsTipsExpanded(false)}
+            className="bg-black/40 backdrop-blur-lg p-5 rounded-2xl border border-white/10 text-white cursor-pointer hover:bg-black/50 transition-all shadow-2xl flex flex-col gap-2 max-w-[280px]"
+            style={{ fontFamily: '"Microsoft YaHei", "微软雅黑", sans-serif' }}
+          >
+            <div className="flex items-center justify-between w-full mb-1">
+               <p className="text-[10px] font-black tracking-widest opacity-80 border-l-2 border-teal-400/50 pl-2">互动小TIPS:</p>
+               <ChevronLeft className="w-4 h-4 text-zinc-500" />
+            </div>
+            <div className="text-[10px] flex flex-col gap-2 leading-relaxed text-left">
+              <span className="w-[12em] block break-all">1. 对着镜头微笑，小动物们就会来到你的身旁</span>
+              <span className="w-[12em] block break-all">2. 晃动身子赶跑他们，留下的茶叶试着用手擦擦</span>
+              <span className="w-[12em] block break-all">3. 对着镜头用手比个C试试</span>
+            </div>
           </div>
-        </div>
+        )}
       </div>
      
       <div className="absolute top-0 right-0 p-6 z-20 pointer-events-auto flex flex-col items-end gap-3">
